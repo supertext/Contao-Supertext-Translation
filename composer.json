@@ -33,7 +33,7 @@
     "require-dev": {
         "contao/manager-plugin": "^2.13",
         "phpstan/phpstan": "^2.1",
-        "phpunit/phpunit": "^12.4"
+        "phpunit/phpunit": "^13.4"
     },
     "conflict": {
         "contao/manager-plugin": "<2.13 || >=3.0"
