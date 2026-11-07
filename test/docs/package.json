@@ -5,7 +5,8 @@
   "description": "Regenerates docs/images from the demo (see docs/DEVELOPER.md)",
   "scripts": {
     "stand-in": "node stand-in.mjs",
-    "screenshots": "node screenshots.mjs"
+    "screenshots": "node screenshots.mjs",
+    "movie": "node movie.mjs"
   },
   "dependencies": {
     "playwright": "^1.56.0"

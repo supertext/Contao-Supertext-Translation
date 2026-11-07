@@ -190,7 +190,7 @@ The unit and integration tests use fakes. `.github/workflows/e2e.yml` also tests
 
 1. **Real API** (repository or organization secret `SUPERTEXT_API_KEY`; without it these steps are skipped with a warning). Version reports are off (`SUPERTEXT_VERSION_REPORTS=0`), so CI runs don't appear in the Commando Center.
    - `test/e2e/features.php` (in the container) compares the SDK's language lists with the live `GET features` (cost-free): a code the plugin offers that the API no longer lists, a demo pair (`en` → `de-CH`, `fr-CH`, `it-CH`) the API doesn't offer, or an SDK default target (`de` → `de-DE`, `zh-TW` → `zh-Hant`, `es-ES` → `es`, …) it doesn't list, fails the run; new codes and a different politeness support are warnings.
-   - `test/e2e/live.mjs` (Playwright): the editor translates the whole English website into every other root through the back end, then the database is checked: every page, article and content element (nested ones included) has a copy, the copies are unpublished, every field is filled and at least 80 % of them changed (page titles like "Home" in German can stay the same), no `data-st-id`/placeholder is left, insert tags, links, bold and italics are kept, the text is in the target language (common words of each language counted) and de-CH has no "ß". Translating again must update the same records (no duplicates). Each run translates the demo site twice into three languages (around 10,000 characters on the key's account).
+   - `test/e2e/live.mjs` (Playwright): the editor translates the whole English website into every other root through the back end, then the database is checked: every page, article and content element (nested ones included) has a copy, the copies are unpublished, every field is filled and at least 80 % of them changed (page titles like "Home" in German can stay the same), no `data-st-id`/placeholder is left, insert tags, links, bold and italics are kept, the text is in the target language (common words of each language counted) and de-CH has no "ß". Translating again must update the same records (no duplicates). The summary's page links must open the page's articles (not Contao's "Invalid token" screen). Each run translates the demo site twice into three languages (around 10,000 characters on the key's account).
 2. **Stand-in API**: the docs screenshots (see *Docs screenshots*), so the images don't change with each machine translation. If `docs/images/` changed, a second job pushes the branch `automation/docs-screenshots` and opens (or updates) the pull request "Docs: regenerate screenshots". This needs *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*.
 
 If a run fails, the artifact `e2e-debug` has the result pages, the demo logs and the stand-in log. Locally:
@@ -258,6 +258,19 @@ CONTAO_URL=http://127.0.0.1:8080 EDITOR_EMAIL=… EDITOR_PASSWORD=… ADMIN_EMAI
 ```
 
 The editor translates the English website, opens the translate screen again (retranslate warning), publishes the German home page through its settings and views it on the website; the administrator part shows the German root's language settings and the group permission. 1200 px wide at 1×, cropped to the relevant part. Locally (no TLS proxy) the script sends `X-Forwarded-Proto: https` for the front-end visit, because the demo's website roots require HTTPS.
+
+## Demo movie
+
+`docs/images/demo.gif` (shown at the top of the README) is recorded by `test/docs/movie.mjs` with Supertext's movie kit (`test/docs/movie/`: Playwright screencast → ffmpeg; intro and outro cards, captions, cursor; Inter font under the SIL Open Font License in `movie/assets/fonts/`). Like the screenshots, it needs a **fresh** demo pointed at the stand-in API, and `ffmpeg`:
+
+```bash
+cd test/docs && npm install
+npm run stand-in &                          # http://127.0.0.1:8765/v1/
+# fresh demo (new database) with SUPERTEXT_API_URL=http://127.0.0.1:8765/v1/, e.g. on port 8080
+CONTAO_URL=http://127.0.0.1:8080 EDITOR_EMAIL=… EDITOR_PASSWORD=… npm run movie
+```
+
+About 32 seconds, 1280×720, English captions, no sound: the demo editor opens the English page *About us* (its content elements), opens *Translate with Supertext* in the site structure, keeps *Deutsch* and *Français*, clicks *Translate* (the waiting time is cut) and opens the new, unpublished German page. The script writes the GIF (800 px, 12 fps, keep it under 3 MB) to `docs/images/demo.gif` and the MP4 to `test/docs/movie/out/Contao-Supertext-Translation.mp4` (git-ignored; `MOVIE_OUT` changes the path). The MP4 is not committed. Re-record it in the same commit when the translate screen changes.
 
 ## Code quality and security checks
 

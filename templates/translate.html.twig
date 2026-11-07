@@ -36,7 +36,7 @@
                                 <ul>
                                     {% for p in target.pages %}
                                         <li>
-                                            <a href="{{ path('contao_backend', {do: 'article', pn: p.id}) }}">{{ p.title }}</a>
+                                            <a href="{{ path('contao_backend', {do: 'article', pn: p.id, rt: contao.request_token}) }}">{{ p.title }}</a>
                                             {% if p.created %}<em>— {{ 'MSC.supertext.created'|trans }}</em>{% endif %}
                                         </li>
                                     {% endfor %}

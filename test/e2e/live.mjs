@@ -123,6 +123,13 @@ async function translateEnglishSite(label) {
 	console.log(`${label}: ${Math.round((Date.now() - started) / 1000)} s`);
 	check(`${label}: every language translated`, confirms.length === targets.length, `${confirms.length}/${targets.length}`);
 	check(`${label}: no errors from Supertext`, errors.length === 0, errors.map((e) => e.replace(/\s+/g, ' ').trim()).join(' | '));
+	// The summary's page links open the page's articles (with the request token, not "Invalid token").
+	const link = form.locator('.tl_confirm a').first();
+	if ((await link.count()) === 1) {
+		await Promise.all([page.waitForNavigation(), link.click()]);
+		const listing = await page.locator('.tl_listing').count();
+		check(`${label}: summary link opens the page's articles`, listing > 0 && !page.url().includes('/contao/confirm'), page.url());
+	}
 }
 
 // --- Log in as the editor ----------------------------------------------------------------

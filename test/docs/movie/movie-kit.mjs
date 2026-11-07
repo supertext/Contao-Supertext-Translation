@@ -1,0 +1,138 @@
+// movie-kit: records short plugin demo movies in Supertext's look with Playwright + ffmpeg.
+// Copy this file (and assets/) into a repo's docs tooling; no dependencies besides playwright and ffmpeg.
+//
+//   const kit = await MovieKit.start(page, { workDir, assets });   // assets: dir with supertext-logo.svg + fonts/
+//   await kit.caption('Open the entry you want to translate');      // caption bar at the bottom
+//   await kit.click(locator);                                       // visible cursor + ripple, then click
+//   kit.pause(); await longWait(); kit.resume();                   // cut waiting time out of the movie
+//   await kit.hold(1500);                                           // keep the current frame on screen
+//   await kit.finish(outMp4, { system: 'Strapi', repo: 'Strapi-Supertext-Translation', gif: 'demo.gif' });
+//
+// Output: 1280x720, 30 fps, H.264 (crf 20, yuv420p, faststart), no sound; optional GIF (800 px, 12 fps).
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const W = 1280, H = 720, FPS = 30;
+const ENC = ['-c:v', 'libx264', '-crf', '20', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-r', String(FPS)];
+
+function ff(args) {
+  const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { stdio: 'inherit' });
+  if (r.status !== 0) throw new Error('ffmpeg failed: ' + args.join(' '));
+}
+function encodeTo(out, args) { const tmp = out.replace(/\.mp4$/, '.part.mp4'); ff([...args, ...ENC, tmp]); fs.renameSync(tmp, out); }
+
+// Injected into every page: caption bar, cursor dot, click ripple. Supertext colours.
+const OVERLAY = `(() => {
+  if (window.__stk) return; const s = document.createElement('style');
+  s.textContent = '#stk-cap{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2147483647;background:#003230;color:#f7f5f3;font:600 22px/1.3 Inter,system-ui,sans-serif;padding:12px 26px;border-radius:999px;box-shadow:0 6px 24px rgba(0,0,0,.25);max-width:1100px;text-align:center;transition:opacity .25s;pointer-events:none}'
+   + '#stk-cap b{color:#78ffaf;font-weight:700}'
+   + '#stk-cur{position:fixed;z-index:2147483647;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(0,50,48,.35);border:3px solid #003230;pointer-events:none;transition:left .45s ease,top .45s ease;left:-50px;top:-50px}'
+   + '.stk-rip{position:fixed;z-index:2147483646;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;border:3px solid #78ffaf;pointer-events:none;animation:stkr .6s ease-out forwards}'
+   + '@keyframes stkr{to{transform:scale(4);opacity:0}}';
+  // Turbo (e.g. Contao 6) swaps <body> without a page load: put the overlay back when it is gone.
+  const add = () => { document.head.appendChild(s);
+    const c = document.createElement('div'); c.id = 'stk-cap'; c.style.opacity = 0; document.body.appendChild(c);
+    const k = document.createElement('div'); k.id = 'stk-cur'; document.body.appendChild(k); };
+  if (document.body) add(); else document.addEventListener('DOMContentLoaded', add);
+  const ensure = () => { if (document.body && !document.getElementById('stk-cur')) add(); else if (!s.isConnected) document.head.appendChild(s); };
+  window.__stk = {
+    caption(t) { ensure(); const c = document.getElementById('stk-cap'); if (!c) return; c.innerHTML = t || ''; c.style.opacity = t ? 1 : 0; },
+    move(x, y) { ensure(); const k = document.getElementById('stk-cur'); if (k) { k.style.left = x + 'px'; k.style.top = y + 'px'; } },
+    ripple(x, y) { ensure(); const r = document.createElement('div'); r.className = 'stk-rip'; r.style.left = x + 'px'; r.style.top = y + 'px'; document.body.appendChild(r); setTimeout(() => r.remove(), 700); },
+  }; })();`;
+
+export class MovieKit {
+  static async start(page, { workDir, assets }) {
+    const kit = new MovieKit(page, workDir, assets);
+    await page.setViewportSize({ width: W, height: H });
+    await page.addInitScript(OVERLAY);
+    await page.evaluate(OVERLAY).catch(() => {});
+    kit.cdp = await page.context().newCDPSession(page);
+    kit.cdp.on('Page.screencastFrame', async (f) => {
+      if (!kit.paused) kit.frames.push({ t: f.metadata.timestamp, data: f.data });
+      kit.cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
+    });
+    await kit.cdp.send('Page.startScreencast', { format: 'jpeg', quality: 92, maxWidth: W, maxHeight: H, everyNthFrame: 1 });
+    return kit;
+  }
+  constructor(page, workDir, assets) {
+    this.page = page; this.workDir = workDir; this.assets = assets; this.frames = []; this.segments = []; this.paused = false;
+    this.caption_ = ''; this.cursor = { x: W / 2, y: H / 2 };
+    fs.mkdirSync(workDir, { recursive: true });
+  }
+  // Re-applies overlay state after navigations.
+  async sync() { await this.page.evaluate(([t, x, y]) => { window.__stk?.caption(t); window.__stk?.move(x, y); }, [this.caption_, this.cursor.x, this.cursor.y]).catch(() => {}); }
+  async caption(text, ms = 0) { this.caption_ = text; await this.sync(); if (ms) await this.hold(ms); }
+  async moveTo(locator) {
+    await locator.scrollIntoViewIfNeeded(); const b = await locator.boundingBox();
+    if (!b) return; this.cursor = { x: b.x + b.width / 2, y: b.y + b.height / 2 }; await this.sync(); await this.page.waitForTimeout(550);
+  }
+  async click(locator, opts) {
+    await this.moveTo(locator);
+    await this.page.evaluate(([x, y]) => window.__stk?.ripple(x, y), [this.cursor.x, this.cursor.y]);
+    await locator.click(opts); await this.page.waitForTimeout(300); await this.sync();
+  }
+  async type(locator, text) { await this.click(locator); await locator.pressSequentially(text, { delay: 45 }); }
+  async hold(ms) { await this.page.waitForTimeout(ms); }
+  // Waiting time is cut: frames are dropped while paused; a cut marker keeps timing honest elsewhere.
+  pause() { this.paused = true; this.frames.push({ cut: true }); }
+  resume() { this.paused = false; }
+
+  async renderCard(kind, { system, repo }) {
+    const font = (f) => `data:font/woff2;base64,${fs.readFileSync(path.join(this.assets, 'fonts', f)).toString('base64')}`;
+    const logo = `data:image/svg+xml;base64,${fs.readFileSync(path.join(this.assets, 'supertext-logo.svg')).toString('base64')}`;
+    const body = kind === 'intro'
+      ? `<div class="k">AI translation for</div><h1>${system}</h1><p>Translate with Supertext, right inside ${system}.</p>`
+      : `<div class="k">Get the plugin</div><h1 class="s">github.com/Supertext/${repo}</h1><p>No Supertext account yet? Create one at supertext.com.</p>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+      @font-face{font-family:Inter;font-weight:100 900;src:url(${font('inter-latin-wght-normal.woff2')}) format('woff2')}
+      *{margin:0;padding:0;box-sizing:border-box} body{width:${W}px;height:${H}px;background:#003230;color:#f7f5f3;font-family:Inter,sans-serif;display:flex;flex-direction:column;justify-content:center;padding:0 96px}
+      img{position:absolute;top:64px;left:96px;height:44px} .k{font-size:34px;font-weight:600;opacity:.85}
+      h1{font-size:96px;font-weight:800;color:#78ffaf;letter-spacing:-2px;line-height:1.05;margin-top:6px} h1.s{font-size:48px;letter-spacing:-.5px}
+      p{font-size:28px;margin-top:22px;opacity:.85} .u{position:absolute;bottom:56px;left:96px;font-size:22px;opacity:.6}
+    </style></head><body><img src="${logo}" alt=""><div>${body}</div><div class="u">supertext.com</div></body></html>`;
+    const ctx = await this.page.context().browser().newContext({ viewport: { width: W, height: H } }); const p = await ctx.newPage();
+    await p.setContent(html, { waitUntil: 'load' }); await p.evaluate(() => document.fonts.ready);
+    const png = path.join(this.workDir, `${kind}.png`); await p.screenshot({ path: png }); await ctx.close();
+    const mp4 = path.join(this.workDir, `${kind}.mp4`);
+    encodeTo(mp4, ['-framerate', String(FPS), '-i', png, '-vf', `format=yuv420p,loop=-1:1,trim=duration=2.8,fade=in:d=0.4,fade=out:st=2.4:d=0.4`]);
+    return mp4;
+  }
+
+  async buildScreen() {
+    await this.cdp.send('Page.stopScreencast');
+    const dir = path.join(this.workDir, 'frames'); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir);
+    // Durations from timestamps; a cut drops the gap; the screencast only sends frames on change, so long gaps are held.
+    const list = []; let prev = null, n = 0;
+    for (const f of this.frames) {
+      if (f.cut) { if (prev) prev.cut = true; continue; }
+      const file = path.join(dir, `${String(n++).padStart(6, '0')}.jpg`); fs.writeFileSync(file, Buffer.from(f.data, 'base64'));
+      if (prev) prev.d = prev.cut ? 0.2 : Math.min(Math.max(f.t - prev.t, 1 / FPS), 10);
+      prev = { file, t: f.t, d: 1.0 }; list.push(prev);
+    }
+    if (!list.length) throw new Error('no frames recorded');
+    const txt = list.map((e) => `file '${e.file}'\nduration ${e.d.toFixed(4)}`).join('\n') + `\nfile '${list.at(-1).file}'\n`;
+    const concat = path.join(this.workDir, 'frames.txt'); fs.writeFileSync(concat, txt);
+    const mp4 = path.join(this.workDir, 'screen.mp4');
+    encodeTo(mp4, ['-f', 'concat', '-safe', '0', '-i', concat, '-vf', `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=0xf7f5f3,format=yuv420p,fade=in:d=0.3`, '-fps_mode', 'cfr']);
+    return mp4;
+  }
+
+  async finish(out, { system, repo, gif }) {
+    const screen = await this.buildScreen();
+    const intro = await this.renderCard('intro', { system, repo });
+    const outro = await this.renderCard('outro', { system, repo });
+    const list = path.join(this.workDir, 'parts.txt');
+    fs.writeFileSync(list, [intro, screen, outro].map((f) => `file '${f}'`).join('\n') + '\n');
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    const tmp = out.replace(/\.mp4$/, '.part.mp4');
+    ff(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', tmp]); fs.renameSync(tmp, out);
+    if (gif) {
+      const pal = path.join(this.workDir, 'pal.png');
+      ff(['-i', out, '-vf', 'fps=12,scale=800:-1:flags=lanczos,palettegen=stats_mode=diff', pal]);
+      ff(['-i', out, '-i', pal, '-lavfi', 'fps=12,scale=800:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle', gif]);
+    }
+    return out;
+  }
+}

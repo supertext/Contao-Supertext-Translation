@@ -28,6 +28,14 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - **Usual Supertext languages are used without setup** (Supertext SDK 0.4.0): a root language without exact match uses its obvious default, `de` → `de-DE`, `en` → `en-US`, `fr` → `fr-FR`, `it` → `it-IT`, `pt` → `pt-PT`, `zh`/`zh-CN` → `zh-Hans`, `zh-TW` → `zh-Hant`, `sr` → `sr-Latn`, `es-ES` → `es`. Only languages without a usual one (e.g. `de-LI`, `en-IE`, `gsw`) are marked *no Supertext language yet*; the message now says to choose the Supertext language in the website root's settings (all four languages).
 - Version reports, the API key check result and the reachability ping now use [Supertext Plugin Health](https://github.com/Supertext/Commando-Center-Supertext-Translation/tree/main/plugin-health) 0.1.0 (bundled in `lib/supertext-plugin-health`); Supertext SDK updated to 0.3.0. No change for sites: settings and stored state stay as they are.
 
+### Fixed
+
+- The page links in the translation summary (e.g. *Über uns — new, unpublished*) opened Contao's "Invalid token" screen; they now open the page's articles directly.
+
+### Documentation
+
+- Demo movie in the README (`docs/images/demo.gif`): an editor translates a page into German and French and checks the German copy. Recorded by `test/docs/movie.mjs` against the demo and the stand-in API.
+
 ## [0.1.0] - 2026-10-07
 
 ### Fixed
