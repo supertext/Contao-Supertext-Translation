@@ -19,6 +19,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - The database update adds the table `tl_supertext_state` for this state.
 - French and Italian interface (and German where it was missing): the translate screen, the permission and all messages, including Supertext errors, follow the back-end user's language.
 - **Supertext language select in each website root** (Content → Pages → edit the website root → *Supertext*): a list of all Supertext languages, "Name (code)" in the back-end language, preselected with the matching or usual Supertext language of the root's language. *Formal or informal* next to it, shown only where the chosen language offers it. Choices are validated against Supertext's list. The database update adds the columns `supertext_language` and `supertext_politeness` to `tl_page`. `language_map` and `politeness` in `config/config.yaml` keep working and override the roots' settings (the root's settings say so); nothing needs to be migrated.
+- Support: the Supertext support form is linked in the README, the user guide and GitHub's "New issue" page.
 
 ### Changed
 

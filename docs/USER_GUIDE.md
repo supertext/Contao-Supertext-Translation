@@ -112,3 +112,7 @@ The translate screen and its messages appear in your back-end language (English,
 | *The parent of page … has no translation* | Translate the parent page into that language first (or tick *Also translate all subpages* on the parent). |
 
 If you don't see the translate icon, you don't have the Supertext permission. Ask your administrator.
+
+## Support
+
+Questions, problems or ideas: use the [Supertext support form](https://integrations.supertext.com/en/support?platform=contao). Mention the version of Contao and of the plugin, what you did and what you expected; an error message helps a lot. You get an answer by email, in your language.
