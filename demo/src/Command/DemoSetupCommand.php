@@ -61,7 +61,28 @@ final class DemoSetupCommand extends Command
             $this->io->writeln('Website roots exist, sample content left as is.');
         }
 
+        $this->ensureRootOwners();
+
         return Command::SUCCESS;
+    }
+
+    /** The owner of the website roots (their access rights need one): the first administrator, else the first user. */
+    private function ownerId(): int
+    {
+        return (int) ($this->db->fetchOne('SELECT id FROM tl_user ORDER BY admin DESC, id LIMIT 1') ?: 0);
+    }
+
+    /**
+     * Website roots with access rights but no owner can't be saved in the back end ("Owner" is
+     * required): give them one. Only fills the missing owner, nothing else is changed.
+     */
+    private function ensureRootOwners(): void
+    {
+        $owner = $this->ownerId();
+
+        if ($owner > 0 && $this->db->executeStatement("UPDATE tl_page SET cuser = ? WHERE type = 'root' AND includeChmod = 1 AND cuser = 0", [$owner]) > 0) {
+            $this->io->writeln('Website roots got an owner (their access rights need one).');
+        }
     }
 
     /** @return bool whether the variables were set */
@@ -198,7 +219,7 @@ final class DemoSetupCommand extends Command
                 'pid' => 0, 'sorting' => $sorting, 'type' => 'root', 'title' => $title, 'alias' => $prefix,
                 'language' => $language, 'fallback' => $fallback ? 1 : 0, 'dns' => '', 'urlPrefix' => $prefix,
                 'urlSuffix' => '', 'includeLayout' => 1, 'layout' => $layoutId, 'published' => 1,
-                'includeChmod' => 1, 'cgroup' => $groupId, 'chmod' => $chmod,
+                'includeChmod' => 1, 'cuser' => $this->ownerId(), 'cgroup' => $groupId, 'chmod' => $chmod,
             ]);
             $sorting += 128;
         }

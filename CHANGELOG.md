@@ -35,6 +35,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 ### Documentation
 
 - Demo movie in the README (`docs/images/demo.gif`): an editor translates a page into German and French and checks the German copy. Recorded by `test/docs/movie.mjs` against the demo and the stand-in API; the MP4 version has an English voice (Piper voice “alba”, CC BY 4.0).
+- Install and configuration movie (MP4, not committed): `test/docs/movie-install.mjs` (`npm run movie:install`) shows an administrator installing the bundle, setting the API key and a website root's Supertext language. The demo's website roots now have an owner, so they can be saved in the back end.
 
 ## [0.1.0] - 2026-10-07
 

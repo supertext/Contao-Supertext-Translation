@@ -11,6 +11,11 @@
 //     during: async () => { await kit.click(de); await kit.click(fr); await kit.click(go); } }); // until it's said
 //   await kit.finish(outMp4, { system: 'Strapi', repo: 'Strapi-Supertext-Translation', gif: 'demo.gif' });
 //
+// Install movies: kit.terminal() shows a terminal in the Supertext look and types the real commands from
+// docs/INSTALLATION.md (shortened output, never secrets or local URLs); finish(…, { kind: 'install' }) titles the
+// intro card "Install Supertext for <System>".
+//   await kit.terminal({ title: 'my-project', lines: [{ cmd: 'npm install strapi-supertext-translation' }, { out: 'added 1 package' }] });
+//
 // Output: 1280x720, 30 fps, H.264 (crf 20, yuv420p, faststart); optional GIF (800 px, 12 fps, silent).
 // Voice: Piper (pip install piper-tts) with the voice "alba" (en_GB, University of Edinburgh, CC BY 4.0: credit it
 // in the docs). The model (63 MB) is downloaded once into voiceCache (default ~/.cache/supertext-movie) and checked
@@ -135,10 +140,43 @@ export class MovieKit {
     const left = need - (Date.now() - started); if (left > 0) await this.hold(left);
   }
 
-  async renderCard(kind, { system, repo }, seconds = 2.8) {
+  // A terminal window (recorded like any page): commands are typed, output lines appear. Back to the CMS with page.goto().
+  async terminal({ title = 'Terminal', lines = [] }) {
+    const font = (f) => `data:font/woff2;base64,${fs.readFileSync(path.join(this.assets, 'fonts', f)).toString('base64')}`;
+    await this.page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>
+      @font-face{font-family:Inter;font-weight:100 900;src:url(${font('inter-latin-wght-normal.woff2')}) format('woff2')}
+      *{margin:0;padding:0;box-sizing:border-box} body{width:${W}px;height:${H}px;background:#f7f5f3;font-family:Inter,sans-serif;display:flex;align-items:flex-start;justify-content:center;padding-top:56px}
+      .w{width:1080px;height:520px;background:#00201f;border-radius:14px;box-shadow:0 18px 60px rgba(0,50,48,.35);overflow:hidden;display:flex;flex-direction:column}
+      .t{background:#003230;color:#f7f5f3;font-size:16px;font-weight:600;padding:12px 18px;display:flex;gap:8px;align-items:center}
+      .t i{width:12px;height:12px;border-radius:50%;background:#f7f5f3;opacity:.35;display:inline-block} .t span{margin-left:12px;opacity:.85}
+      pre{flex:1;padding:22px 26px;color:#e8f0ee;font:500 21px/1.55 ui-monospace,'DejaVu Sans Mono',monospace;white-space:pre-wrap;word-break:break-all}
+      .p{color:#78ffaf} .o{color:#e8f0ee;opacity:.7} .c::after{content:'▋';color:#78ffaf;animation:b 1s steps(1) infinite} @keyframes b{50%{opacity:0}}
+    </style></head><body><div class="w"><div class="t"><i></i><i></i><i></i><span></span></div><pre id="x"></pre></div></body></html>`);
+    await this.page.evaluate((t) => { document.querySelector('.t span').textContent = t; }, title);
+    await this.page.evaluate(OVERLAY).catch(() => {}); await this.sync();
+    await this.page.evaluate(() => document.fonts.ready);
+    for (const l of lines) {
+      if (l.cmd !== undefined) {
+        await this.page.evaluate(() => { const x = document.getElementById('x'); x.querySelector('.c')?.classList.remove('c');
+          const p = document.createElement('span'); p.className = 'p'; p.textContent = '$ '; x.appendChild(p);
+          const c = document.createElement('span'); c.className = 'c'; x.appendChild(c); });
+        for (const ch of l.cmd) { await this.page.evaluate((ch) => { document.querySelector('#x .c').textContent += ch; }, ch); await this.page.waitForTimeout(38); }
+        await this.page.waitForTimeout(450);
+        await this.page.evaluate(() => { document.querySelector('#x .c').classList.remove('c'); document.getElementById('x').append('\n'); });
+      } else {
+        await this.page.evaluate((o) => { const s = document.createElement('span'); s.className = 'o'; s.textContent = o + '\n'; document.getElementById('x').appendChild(s); }, l.out ?? '');
+        await this.page.waitForTimeout(l.wait ?? 180);
+      }
+    }
+    await this.page.evaluate(() => { const c = document.createElement('span'); c.className = 'p c'; c.textContent = '$ '; document.getElementById('x').appendChild(c); });
+  }
+
+  async renderCard(kind, { system, repo, movie }, seconds = 2.8) {
     const font = (f) => `data:font/woff2;base64,${fs.readFileSync(path.join(this.assets, 'fonts', f)).toString('base64')}`;
     const logo = `data:image/svg+xml;base64,${fs.readFileSync(path.join(this.assets, 'supertext-logo.svg')).toString('base64')}`;
-    const body = kind === 'intro'
+    const body = kind === 'intro' && movie === 'install'
+      ? `<div class="k">Install and set up</div><h1>${system}</h1><p>Supertext AI translation for ${system} in a few minutes.</p>`
+      : kind === 'intro'
       ? `<div class="k">AI translation for</div><h1>${system}</h1><p>Translate with Supertext, right inside ${system}.</p>`
       : `<div class="k">Get the plugin</div><h1 class="s">github.com/Supertext/${repo}</h1><p>No Supertext account yet? Create one at supertext.com.</p>`;
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -188,12 +226,13 @@ export class MovieKit {
     return mp4;
   }
 
-  async finish(out, { system, repo, gif, introLine, outroLine }) {
+  // kind: 'demo' (default) or 'install' (intro card and line "Install and set up …").
+  async finish(out, { system, repo, gif, introLine, outroLine, kind = 'demo' }) {
     const screen = await this.buildScreen();
-    const vi = this.speak(introLine ?? `AI translation for ${system}, with Supertext.`);
+    const vi = this.speak(introLine ?? (kind === 'install' ? `How to install and set up Supertext for ${system}.` : `AI translation for ${system}, with Supertext.`));
     const vo = this.speak(outroLine ?? `Get the plugin on GitHub. And if you don't have a Supertext account yet, create one at supertext.com.`);
     const introS = Math.max(2.8, vi ? vi.d + 1.2 : 0), outroS = Math.max(2.8, vo ? vo.d + 1.4 : 0);
-    const intro = await this.renderCard('intro', { system, repo }, introS);
+    const intro = await this.renderCard('intro', { system, repo, movie: kind }, introS);
     const outro = await this.renderCard('outro', { system, repo }, outroS);
     const screenS = parseFloat(spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', screen]).stdout.toString());
     const list = path.join(this.workDir, 'parts.txt');

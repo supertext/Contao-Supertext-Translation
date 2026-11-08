@@ -211,6 +211,7 @@ A Contao 6.0 site using the bundle from this repository (path repository, copied
 
 - **Accounts** (see the demo accounts rule in `CLAUDE.md`): `DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_PASSWORD` → administrator; `DEMO_EDITOR_EMAIL`/`DEMO_EDITOR_PASSWORD` → member of the **Editors** group (pages and articles modules, all page types, all fields, all content elements, the language roots as pagemounts, edit permission via the roots' `chmod`, and the Supertext permission). Log in with the e-mail address. Since Contao 5 every field is permission-controlled unless it sets `'exclude' => false`, so the group is allowed every such field of pages, articles and content elements (including *Publish page*); on an existing group, missing field permissions are added (never removed). Missing accounts are created; existing ones are never changed; a password shorter than Contao's minimum (8) is skipped with a warning. Contao has no browser "create first admin" screen; without these variables no accounts are created (use `contao:user:create`).
 - **Content** (only when there is no website root yet): theme, page layout with navigation and language switcher, website roots `en` (fallback, `/en/`), `de-CH` (`/de/`), `fr-CH` (`/fr/`), `it-CH` (`/it/`), and English pages with articles, text, list, table, element group, hyperlink and insert tags. The other roots start empty; translate *English* to fill them.
+- **Owner of the website roots**: the roots' access rights need an owner (*Owner* is required when the page is saved in the back end). New roots get the first administrator; roots without an owner get one on the next start (nothing else is changed).
 
 Variables (documented in `demo/.env.example`):
 
@@ -272,6 +273,16 @@ CONTAO_URL=http://127.0.0.1:8080 EDITOR_EMAIL=… EDITOR_PASSWORD=… npm run mo
 ```
 
 About 47 seconds, 1280×720, an English voice and English captions: the demo editor opens the English page *About us* (its content elements), opens *Translate with Supertext* in the site structure, keeps *Deutsch* and *Français*, clicks *Translate* (the waiting time is cut) and opens the new, unpublished German page. The script writes the GIF (800 px, 12 fps, keep it under 3 MB) to `docs/images/demo.gif` and the MP4 to `test/docs/movie/out/Contao-Supertext-Translation.mp4` (git-ignored; `MOVIE_OUT` changes the path). The MP4 is not committed; the GIF is silent. The voice model (63 MB, pinned revision, checked by SHA-256) is downloaded once into `test/docs/movie/voice-cache/` (git-ignored, never committed); the time spent generating speech is cut from the movie. Re-record it in the same commit when the translate screen changes.
+
+**Install and configuration movie** (`test/docs/movie-install.mjs`, `npm run movie:install`): the same kit, voice and look, for administrators. Same setup as above, but signed in as the demo **administrator** and with a made-up API key in the demo (the stand-in accepts any key):
+
+```bash
+# fresh demo with SUPERTEXT_API_URL=http://127.0.0.1:8765/v1/, SUPERTEXT_REPORT_URL=http://127.0.0.1:8765/report
+# and SUPERTEXT_API_KEY=st-demo-0000-0000-0000
+CONTAO_URL=http://127.0.0.1:8080 ADMIN_EMAIL=… ADMIN_PASSWORD=… npm run movie:install
+```
+
+About 87 seconds: a terminal (`kit.terminal()`) with the commands from `docs/INSTALLATION.md` (`composer require`, `contao:migrate`, the key in `.env.local` with the fake key `st-demo-0000-0000-0000`, `cache:clear`; output shortened), where the key comes from (supertext.com → Integrations → API; create an account at supertext.com), then the back end: the website roots under *Pages*, the API key check on the *Translate with Supertext* screen (*the connection to Supertext works*), the German root's section *Supertext* (*Supertext language* German (Switzerland) (de-CH), *Translation review* left off), *Save*, and where editors find *Translate with Supertext*. No GIF; the MP4 goes to `test/docs/movie/out/Contao-Supertext-Translation-install.mp4` (git-ignored, not committed; `MOVIE_OUT` changes the path). Re-record it when the installation steps, the root's *Supertext* section or the key check change.
 
 Voice: Piper voice “alba” (en_GB), trained on a dataset from the University of Edinburgh's Centre for Speech Technology Research, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
 
