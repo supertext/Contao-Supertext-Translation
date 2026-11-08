@@ -6,14 +6,27 @@
 //   await kit.click(locator);                                       // visible cursor + ripple, then click
 //   kit.pause(); await longWait(); kit.resume();                   // cut waiting time out of the movie
 //   await kit.hold(1500);                                           // keep the current frame on screen
+//   await kit.say('Tick German and French, then click Translate with Supertext.', {          // voice + caption;
+//     caption: 'Tick <b>German</b> and <b>French</b>, click <b>Translate with Supertext</b>',  // the step stays
+//     during: async () => { await kit.click(de); await kit.click(fr); await kit.click(go); } }); // until it's said
 //   await kit.finish(outMp4, { system: 'Strapi', repo: 'Strapi-Supertext-Translation', gif: 'demo.gif' });
 //
-// Output: 1280x720, 30 fps, H.264 (crf 20, yuv420p, faststart), no sound; optional GIF (800 px, 12 fps).
+// Output: 1280x720, 30 fps, H.264 (crf 20, yuv420p, faststart); optional GIF (800 px, 12 fps, silent).
+// Voice: Piper (pip install piper-tts) with the voice "alba" (en_GB, University of Edinburgh, CC BY 4.0: credit it
+// in the docs). The model (63 MB) is downloaded once into voiceCache (default ~/.cache/supertext-movie) and checked
+// by SHA-256. Without Piper or with MOVIE_VOICE=0 the movie is made without sound (captions only).
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 
 const W = 1280, H = 720, FPS = 30;
+const VOICE = {
+  name: 'en_GB-alba-medium',
+  base: 'https://huggingface.co/rhasspy/piper-voices/resolve/e7229f7d33a10e145e109b886d661984201ac3c4/en/en_GB/alba/medium/',
+  sha256: { onnx: '401369c4a81d09fdd86c32c5c864440811dbdcc66466cde2d64f7133a66ad03b', json: 'aa965a2f02ecced632c2694e1fc72bbff6d65f265fab567ca945918c73dd89f4' },
+};
 const ENC = ['-c:v', 'libx264', '-crf', '20', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-r', String(FPS)];
 
 function ff(args) {
@@ -43,8 +56,9 @@ const OVERLAY = `(() => {
   }; })();`;
 
 export class MovieKit {
-  static async start(page, { workDir, assets }) {
+  static async start(page, { workDir, assets, voiceCache }) {
     const kit = new MovieKit(page, workDir, assets);
+    kit.voiceModel = await MovieKit.voiceModel(voiceCache);
     await page.setViewportSize({ width: W, height: H });
     await page.addInitScript(OVERLAY);
     await page.evaluate(OVERLAY).catch(() => {});
@@ -58,7 +72,7 @@ export class MovieKit {
   }
   constructor(page, workDir, assets) {
     this.page = page; this.workDir = workDir; this.assets = assets; this.frames = []; this.segments = []; this.paused = false;
-    this.caption_ = ''; this.cursor = { x: W / 2, y: H / 2 };
+    this.caption_ = ''; this.cursor = { x: W / 2, y: H / 2 }; this.voiceN = 0;
     fs.mkdirSync(workDir, { recursive: true });
   }
   // Re-applies overlay state after navigations.
@@ -76,10 +90,52 @@ export class MovieKit {
   async type(locator, text) { await this.click(locator); await locator.pressSequentially(text, { delay: 45 }); }
   async hold(ms) { await this.page.waitForTimeout(ms); }
   // Waiting time is cut: frames are dropped while paused; a cut marker keeps timing honest elsewhere.
-  pause() { this.paused = true; this.frames.push({ cut: true }); }
-  resume() { this.paused = false; }
+  pause() { this.paused = true; this.cut_ = { cut: true, at: Date.now() / 1000 }; this.frames.push(this.cut_); }
+  // Frames can arrive after resume() although they were taken while paused (speech generation blocks the event
+  // loop): the cut lasts until resume(), so those are dropped too.
+  resume() { this.paused = false; if (this.cut_) this.cut_.until = Date.now() / 1000; }
 
-  async renderCard(kind, { system, repo }) {
+  // The voice model, downloaded once and checked; null = no voice (no Piper, MOVIE_VOICE=0, or download failed).
+  static async voiceModel(cache) {
+    if (process.env.MOVIE_VOICE === '0') return null;
+    if (spawnSync('python3', ['-c', 'import piper'], { stdio: 'ignore' }).status !== 0) { console.warn('movie-kit: piper-tts not installed, no voice'); return null; }
+    const dir = cache || path.join(os.homedir(), '.cache', 'supertext-movie'); fs.mkdirSync(dir, { recursive: true });
+    for (const [ext, file] of [['onnx', `${VOICE.name}.onnx`], ['json', `${VOICE.name}.onnx.json`]]) {
+      const f = path.join(dir, file);
+      const ok = () => fs.existsSync(f) && crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex') === VOICE.sha256[ext];
+      if (!ok()) {
+        const res = await fetch(VOICE.base + file); if (!res.ok) { console.warn(`movie-kit: voice download failed (${res.status}), no voice`); return null; }
+        fs.writeFileSync(f, Buffer.from(await res.arrayBuffer()));
+        if (!ok()) { fs.rmSync(f); throw new Error(`movie-kit: ${file} doesn't match its SHA-256`); }
+      }
+    }
+    return path.join(dir, `${VOICE.name}.onnx`);
+  }
+  // Speech for one line: WAV file and its length in seconds (null without a voice).
+  speak(text) {
+    if (!this.voiceModel) return null;
+    const wav = path.join(this.workDir, `voice-${String(this.voiceN++).padStart(2, '0')}.wav`);
+    const r = spawnSync('python3', ['-m', 'piper', '-m', this.voiceModel, '-f', wav, '--sentence-silence', '0.25'], { input: text, stdio: ['pipe', 'ignore', 'inherit'] });
+    if (r.status !== 0) throw new Error('piper failed');
+    const d = parseFloat(spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', wav]).stdout.toString());
+    return { wav, d };
+  }
+  // Says a line (and shows its caption), runs `during` meanwhile, and holds until the line is finished.
+  // Without a voice it holds about as long as the line takes to read.
+  async say(text, { caption, during, after = 400 } = {}) {
+    // Making the speech takes a moment: that time is cut, so no silent gap appears before the line.
+    const wasPaused = this.paused; if (!wasPaused) this.pause();
+    const v = this.speak(text);
+    if (!wasPaused) this.resume();
+    const started = Date.now();
+    if (v) this.frames.push({ voice: v.wav, at: started / 1000 });
+    await this.caption(caption ?? text);
+    if (during) await during();
+    const need = (v ? v.d * 1000 : Math.max(1800, text.length * 55)) + after;
+    const left = need - (Date.now() - started); if (left > 0) await this.hold(left);
+  }
+
+  async renderCard(kind, { system, repo }, seconds = 2.8) {
     const font = (f) => `data:font/woff2;base64,${fs.readFileSync(path.join(this.assets, 'fonts', f)).toString('base64')}`;
     const logo = `data:image/svg+xml;base64,${fs.readFileSync(path.join(this.assets, 'supertext-logo.svg')).toString('base64')}`;
     const body = kind === 'intro'
@@ -96,38 +152,67 @@ export class MovieKit {
     await p.setContent(html, { waitUntil: 'load' }); await p.evaluate(() => document.fonts.ready);
     const png = path.join(this.workDir, `${kind}.png`); await p.screenshot({ path: png }); await ctx.close();
     const mp4 = path.join(this.workDir, `${kind}.mp4`);
-    encodeTo(mp4, ['-framerate', String(FPS), '-i', png, '-vf', `format=yuv420p,loop=-1:1,trim=duration=2.8,fade=in:d=0.4,fade=out:st=2.4:d=0.4`]);
+    encodeTo(mp4, ['-framerate', String(FPS), '-i', png, '-vf', `format=yuv420p,loop=-1:1,trim=duration=${seconds.toFixed(2)},fade=in:d=0.4,fade=out:st=${(seconds - 0.4).toFixed(2)}:d=0.4`]);
     return mp4;
   }
 
   async buildScreen() {
-    await this.cdp.send('Page.stopScreencast');
+    const stopped = Date.now() / 1000; await this.cdp.send('Page.stopScreencast');
     const dir = path.join(this.workDir, 'frames'); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir);
     // Durations from timestamps; a cut drops the gap; the screencast only sends frames on change, so long gaps are held.
-    const list = []; let prev = null, n = 0;
+    const list = [], marks = []; let prev = null, n = 0, pending = [], cutAt = 0;
     for (const f of this.frames) {
-      if (f.cut) { if (prev) prev.cut = true; continue; }
+      // A cut ends the picture shown at that moment (it stays as long as it was really on screen), then jumps.
+      if (f.cut) { cutAt = f.until ?? f.at; if (prev && !prev.cut) { prev.cut = true; prev.d = Math.min(Math.max(f.at - prev.t, 1 / FPS), 10) + 0.2; } continue; }
+      // A voice line starts with the next picture (its caption appearing): same clock as the frames.
+      if (f.voice) { pending.push(f); continue; }
+      // Frames are delivered late sometimes: one taken before a cut belongs to the cut-out time.
+      if (f.t < cutAt) continue;
+      // Faster than the frame rate: the newer picture replaces the last one, so timing stays real time.
+      if (prev && !prev.cut && f.t - prev.t < 1 / FPS) { fs.writeFileSync(prev.file, Buffer.from(f.data, 'base64')); continue; }
       const file = path.join(dir, `${String(n++).padStart(6, '0')}.jpg`); fs.writeFileSync(file, Buffer.from(f.data, 'base64'));
-      if (prev) prev.d = prev.cut ? 0.2 : Math.min(Math.max(f.t - prev.t, 1 / FPS), 10);
+      if (prev && !prev.cut) prev.d = Math.min(Math.max(f.t - prev.t, 1 / FPS), 10);
       prev = { file, t: f.t, d: 1.0 }; list.push(prev);
+      for (const v of pending.filter((v) => f.t >= v.at - 0.05)) marks.push({ voice: v.voice, entry: prev });
+      pending = pending.filter((v) => f.t < v.at - 0.05);
     }
     if (!list.length) throw new Error('no frames recorded');
+    const last = list.at(-1); if (!last.cut) last.d = Math.min(Math.max(stopped - last.t, 1 / FPS), 10);
     const txt = list.map((e) => `file '${e.file}'\nduration ${e.d.toFixed(4)}`).join('\n') + `\nfile '${list.at(-1).file}'\n`;
     const concat = path.join(this.workDir, 'frames.txt'); fs.writeFileSync(concat, txt);
+    // Movie time of each voice line.
+    let acc = 0; for (const e of list) { e.start = acc; acc += e.d; }
+    this.voices = marks.map((m) => ({ wav: m.voice, at: m.entry.start }));
     const mp4 = path.join(this.workDir, 'screen.mp4');
     encodeTo(mp4, ['-f', 'concat', '-safe', '0', '-i', concat, '-vf', `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=0xf7f5f3,format=yuv420p,fade=in:d=0.3`, '-fps_mode', 'cfr']);
     return mp4;
   }
 
-  async finish(out, { system, repo, gif }) {
+  async finish(out, { system, repo, gif, introLine, outroLine }) {
     const screen = await this.buildScreen();
-    const intro = await this.renderCard('intro', { system, repo });
-    const outro = await this.renderCard('outro', { system, repo });
+    const vi = this.speak(introLine ?? `AI translation for ${system}, with Supertext.`);
+    const vo = this.speak(outroLine ?? `Get the plugin on GitHub. And if you don't have a Supertext account yet, create one at supertext.com.`);
+    const introS = Math.max(2.8, vi ? vi.d + 1.2 : 0), outroS = Math.max(2.8, vo ? vo.d + 1.4 : 0);
+    const intro = await this.renderCard('intro', { system, repo }, introS);
+    const outro = await this.renderCard('outro', { system, repo }, outroS);
+    const screenS = parseFloat(spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', screen]).stdout.toString());
     const list = path.join(this.workDir, 'parts.txt');
     fs.writeFileSync(list, [intro, screen, outro].map((f) => `file '${f}'`).join('\n') + '\n');
     fs.mkdirSync(path.dirname(out), { recursive: true });
     const tmp = out.replace(/\.mp4$/, '.part.mp4');
-    ff(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', tmp]); fs.renameSync(tmp, out);
+    const silent = path.join(this.workDir, 'silent.mp4');
+    ff(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', silent]);
+    const lines = [];
+    if (vi) lines.push({ wav: vi.wav, at: 0.5 });
+    for (const v of this.voices || []) lines.push({ wav: v.wav, at: introS + v.at });
+    if (vo) lines.push({ wav: vo.wav, at: introS + screenS + 0.5 });
+    if (lines.length) {
+      const inputs = lines.flatMap((l) => ['-i', l.wav]);
+      const delays = lines.map((l, i) => `[${i + 1}:a]adelay=${Math.round(l.at * 1000)}:all=1[a${i}]`).join(';');
+      const mix = `${delays};${lines.map((_, i) => `[a${i}]`).join('')}amix=inputs=${lines.length}:normalize=0,loudnorm=I=-16:TP=-1.5,aresample=48000,apad[a]`;
+      ff(['-i', silent, ...inputs, '-filter_complex', mix, '-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', tmp]);
+    } else ff(['-i', silent, '-c', 'copy', '-movflags', '+faststart', tmp]);
+    fs.renameSync(tmp, out);
     if (gif) {
       const pal = path.join(this.workDir, 'pal.png');
       ff(['-i', out, '-vf', 'fps=12,scale=800:-1:flags=lanczos,palettegen=stats_mode=diff', pal]);

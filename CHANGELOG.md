@@ -34,7 +34,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ### Documentation
 
-- Demo movie in the README (`docs/images/demo.gif`): an editor translates a page into German and French and checks the German copy. Recorded by `test/docs/movie.mjs` against the demo and the stand-in API.
+- Demo movie in the README (`docs/images/demo.gif`): an editor translates a page into German and French and checks the German copy. Recorded by `test/docs/movie.mjs` against the demo and the stand-in API; the MP4 version has an English voice (Piper voice “alba”, CC BY 4.0).
 
 ## [0.1.0] - 2026-10-07
 

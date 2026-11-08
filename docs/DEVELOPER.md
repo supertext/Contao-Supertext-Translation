@@ -261,16 +261,19 @@ The editor translates the English website, opens the translate screen again (ret
 
 ## Demo movie
 
-`docs/images/demo.gif` (shown at the top of the README) is recorded by `test/docs/movie.mjs` with Supertext's movie kit (`test/docs/movie/`: Playwright screencast → ffmpeg; intro and outro cards, captions, cursor; Inter font under the SIL Open Font License in `movie/assets/fonts/`). Like the screenshots, it needs a **fresh** demo pointed at the stand-in API, and `ffmpeg`:
+`docs/images/demo.gif` (shown at the top of the README) is recorded by `test/docs/movie.mjs` with Supertext's movie kit (`test/docs/movie/`: Playwright screencast → ffmpeg; intro and outro cards, captions, cursor; Inter font under the SIL Open Font License in `movie/assets/fonts/`). Like the screenshots, it needs a **fresh** demo pointed at the stand-in API, `ffmpeg` and, for the voice, Piper:
 
 ```bash
+pip install piper-tts                       # the voice; without it (or with MOVIE_VOICE=0) the movie is silent
 cd test/docs && npm install
 npm run stand-in &                          # http://127.0.0.1:8765/v1/
 # fresh demo (new database) with SUPERTEXT_API_URL=http://127.0.0.1:8765/v1/, e.g. on port 8080
 CONTAO_URL=http://127.0.0.1:8080 EDITOR_EMAIL=… EDITOR_PASSWORD=… npm run movie
 ```
 
-About 32 seconds, 1280×720, English captions, no sound: the demo editor opens the English page *About us* (its content elements), opens *Translate with Supertext* in the site structure, keeps *Deutsch* and *Français*, clicks *Translate* (the waiting time is cut) and opens the new, unpublished German page. The script writes the GIF (800 px, 12 fps, keep it under 3 MB) to `docs/images/demo.gif` and the MP4 to `test/docs/movie/out/Contao-Supertext-Translation.mp4` (git-ignored; `MOVIE_OUT` changes the path). The MP4 is not committed. Re-record it in the same commit when the translate screen changes.
+About 47 seconds, 1280×720, an English voice and English captions: the demo editor opens the English page *About us* (its content elements), opens *Translate with Supertext* in the site structure, keeps *Deutsch* and *Français*, clicks *Translate* (the waiting time is cut) and opens the new, unpublished German page. The script writes the GIF (800 px, 12 fps, keep it under 3 MB) to `docs/images/demo.gif` and the MP4 to `test/docs/movie/out/Contao-Supertext-Translation.mp4` (git-ignored; `MOVIE_OUT` changes the path). The MP4 is not committed; the GIF is silent. The voice model (63 MB, pinned revision, checked by SHA-256) is downloaded once into `test/docs/movie/voice-cache/` (git-ignored, never committed); the time spent generating speech is cut from the movie. Re-record it in the same commit when the translate screen changes.
+
+Voice: Piper voice “alba” (en_GB), trained on a dataset from the University of Edinburgh's Centre for Speech Technology Research, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
 
 ## Code quality and security checks
 

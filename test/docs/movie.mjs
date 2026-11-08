@@ -7,7 +7,8 @@
  *
  *   CONTAO_URL=http://127.0.0.1:8080 EDITOR_EMAIL=… EDITOR_PASSWORD=… node test/docs/movie.mjs
  *
- * MOVIE_OUT: where the MP4 goes (default test/docs/movie/out/Contao-Supertext-Translation.mp4,
+ * Voice: Piper (pip install piper-tts), voice "alba" downloaded once into movie/voice-cache/
+ * (git-ignored); MOVIE_VOICE=0 makes a silent movie. MOVIE_OUT: where the MP4 goes (default test/docs/movie/out/Contao-Supertext-Translation.mp4,
  * git-ignored; the MP4 is not committed). Needs ffmpeg.
  */
 import { chromium } from 'playwright';
@@ -55,39 +56,47 @@ const aboutContent = await articleRow('About us').locator('a[href*="table=tl_con
 
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'contao-movie-'));
 await page.goto(aboutContent);
-const kit = await MovieKit.start(page, { workDir, assets: here('movie/assets') });
+const kit = await MovieKit.start(page, { workDir, assets: here('movie/assets'), voiceCache: here('movie/voice-cache') });
 
 // 1. The English page in the back end.
-await kit.caption('A page in English: “About us”', 3000);
+await kit.say("Here's a page in English, “About us”, in the Contao back end.", { caption: 'A page in English: “About us”' });
 
 // 2. Site structure → Translate with Supertext.
-await kit.caption('Open the site structure: <b>Pages</b>');
-await kit.click(page.locator('#tl_navigation a, nav a').filter({ hasText: /^\s*Pages\s*$/ }).first());
-await page.getByText('About us', { exact: true }).first().waitFor();
-await kit.sync();
-await kit.hold(1500);
-await kit.caption('Click <b>Translate with Supertext</b> on the page');
+await kit.say('Open the site structure, under Pages.', {
+	caption: 'Open the site structure: <b>Pages</b>',
+	during: async () => {
+		await kit.click(page.locator('#tl_navigation a, nav a').filter({ hasText: /^\s*Pages\s*$/ }).first());
+		await page.getByText('About us', { exact: true }).first().waitFor();
+		await kit.sync();
+	},
+});
 const translate = row('About us').locator('a[href*="/supertext/translate/"]:visible').first();
-await translate.waitFor({ state: 'visible' });
-await kit.moveTo(translate);
-await translate.hover(); // Contao's tooltip names the operation
-await kit.hold(900);
-await page.evaluate(([x, y]) => window.__stk?.ripple(x, y), [kit.cursor.x, kit.cursor.y]);
-await Promise.all([page.waitForURL(/supertext\/translate/), translate.click()]);
-await kit.sync();
-await kit.hold(600);
+await kit.say('Next to the page, click Translate with Supertext.', {
+	caption: 'Click <b>Translate with Supertext</b> on the page',
+	during: async () => {
+		await translate.waitFor({ state: 'visible' });
+		await kit.moveTo(translate);
+		await translate.hover(); // Contao's tooltip names the operation
+		await kit.hold(700);
+		await page.evaluate(([x, y]) => window.__stk?.ripple(x, y), [kit.cursor.x, kit.cursor.y]);
+		await Promise.all([page.waitForURL(/supertext\/translate/), translate.click()]);
+		await kit.sync();
+	},
+});
 
 // 3. Pick the languages and start.
 const form = page.locator('form.supertext-translate');
-await kit.caption('Choose the languages: <b>Deutsch</b> and <b>Français</b>');
-await kit.hold(1800);
-await kit.click(form.locator('label', { hasText: 'Italiano' }));
-await kit.hold(1000);
-await kit.caption('Click <b>Translate</b>');
+await kit.say('Keep German and French, and untick Italian.', {
+	caption: 'Choose the languages: <b>Deutsch</b> and <b>Français</b>',
+	during: async () => {
+		await kit.hold(800);
+		await kit.click(form.locator('label', { hasText: 'Italiano' }));
+	},
+});
 const submit = form.locator('button.tl_submit, input.tl_submit').first();
-await kit.moveTo(submit);
+await kit.say('Then click Translate.', { caption: 'Click <b>Translate</b>', during: () => kit.moveTo(submit), after: 0 });
 
-// The stand-in answers at once: send the request only after the waiting caption has been seen.
+// The stand-in answers at once: send the request only after the progress state has been seen.
 let release;
 const released = new Promise((resolve) => (release = resolve));
 await page.route(/supertext\/translate\/\d+/, async (route) => {
@@ -96,26 +105,35 @@ await page.route(/supertext\/translate\/\d+/, async (route) => {
 });
 await page.evaluate(([x, y]) => window.__stk?.ripple(x, y), [kit.cursor.x, kit.cursor.y]);
 const done = page.waitForURL(/supertext\/translate/, { waitUntil: 'load', timeout: 300_000 }).then(() => page.waitForSelector('.tl_confirm', { timeout: 300_000 }));
-await submit.click({ noWaitAfter: true });
-await kit.caption('Supertext translates the content…', 1300);
+await kit.say('Supertext translates the content.', {
+	caption: 'Supertext translates the content…',
+	during: async () => {
+		await submit.click({ noWaitAfter: true });
+		await kit.hold(1300);
+		release();
+	},
+});
 kit.pause();
-release();
 await done;
 kit.resume();
 await kit.sync();
 
 // 4. The result: open the German copy.
-await kit.caption('Done: German and French pages, unpublished', 3000);
-await kit.caption('Open the German page to check it');
+await kit.say('A few seconds later, the German and French pages are there, saved unpublished.', { caption: 'Done: German and French pages, unpublished' });
 const german = page.locator('.tl_confirm').first().locator('a', { hasText: 'Über uns' });
-await kit.click(german);
-await page.waitForLoadState('load');
-await kit.sync();
-await kit.hold(800);
-await kit.click(articleRow('Über uns').locator('a[href*="table=tl_content"]:visible').first());
-await page.waitForLoadState('load');
-await kit.sync();
-await kit.caption('The German version is ready – review it and publish', 4000);
+await kit.say("Let's open the German page and check it.", {
+	caption: 'Open the German page to check it',
+	during: async () => {
+		await kit.click(german);
+		await page.waitForLoadState('load');
+		await kit.sync();
+		await kit.hold(500);
+		await kit.click(articleRow('Über uns').locator('a[href*="table=tl_content"]:visible').first());
+		await page.waitForLoadState('load');
+		await kit.sync();
+	},
+});
+await kit.say('The German version is ready. Review it, and publish it as usual.', { caption: 'The German version is ready – review it and publish' });
 await kit.caption('');
 
 fs.mkdirSync(path.dirname(out), { recursive: true });
