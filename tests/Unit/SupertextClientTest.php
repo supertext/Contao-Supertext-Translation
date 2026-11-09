@@ -181,4 +181,65 @@ final class SupertextClientTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         SupertextClient::create($http, 'k', '', 'prod');
     }
+
+    public function testReviewGoesThroughTheReviewService(): void
+    {
+        $fake = new FakeSupertext();
+        $client = new SupertextClient($fake->client(), 'test-key', 'https://api.test/v1', 1000, 10_000, static function (): void {}, 'https://review.test/v1/');
+
+        $this->assertSame($client, $client->forReview(false));
+        $review = $client->forReview(true);
+        $this->assertNotSame($client, $review);
+        $this->assertSame($review, $client->forReview(true), 'one review client');
+
+        $this->assertStringContainsString('[de-CH] Hallo', $review->translateHtml('<div data-st-id="a">Hallo</div>', 'de-CH'));
+        $this->assertSame([], array_filter($fake->calls, static fn ($c) => !str_starts_with($c['url'], 'https://review.test/v1/')), 'every call to the review service, with the same key');
+
+        $client->validateApiKey();
+        $this->assertSame('https://api.test/v1/features', end($fake->calls)['url']);
+    }
+
+    public function testReviewOffWithoutReviewUrl(): void
+    {
+        $http = (new FakeSupertext())->client();
+        $client = new SupertextClient($http, 'test-key', 'https://api.test/v1');
+        $this->assertSame($client, $client->forReview(true));
+
+        $fake = new FakeSupertext();
+        SupertextClient::create($fake->client(), 'test-key', '', 'live')->forReview(true)->validateApiKey();
+        $this->assertSame(SupertextClient::REVIEW_URL.'features', $fake->calls[0]['url'], 'Supertext\'s review service by default');
+
+        $client = SupertextClient::create($http, 'test-key', '', 'live', reviewUrl: '');
+        $this->assertSame($client, $client->forReview(true), 'empty review_url: review off everywhere');
+    }
+
+    public function testFetchesAndAcknowledgesCorrectionsFromTheReviewService(): void
+    {
+        $fake = new FakeSupertext();
+        $fake->corrections = [
+            ['id' => '4', 'st_id' => 'c.12.text', 'source_lang' => 'en', 'target_lang' => 'de-CH', 'politeness' => 'more', 'source_html' => 'Hi', 'previous_html' => '[de-CH] Hi', 'html' => 'Hallo', 'status' => 'corrected', 'corrected_at' => '', 'version' => '0123456789abcdef'],
+            ['id' => '5', 'st_id' => 'c.13.text', 'source_lang' => 'en', 'target_lang' => 'fr-CH', 'politeness' => 'default', 'source_html' => 'Hi', 'previous_html' => '[fr-CH] Hi', 'html' => 'Salut', 'status' => 'corrected', 'corrected_at' => '', 'version' => '0123456789abcdef'],
+        ];
+        $review = (new SupertextClient($fake->client(), 'test-key', 'https://api.test/v1', 1000, 10_000, static function (): void {}, 'https://review.test/v1/'))->forReview(true);
+
+        $pending = $review->pendingCorrections('de-CH');
+        $this->assertCount(1, $pending);
+        $this->assertSame(['c.12.text', '[de-CH] Hi', 'Hallo'], [$pending[0]->segmentId, $pending[0]->previousHtml, $pending[0]->html]);
+        $this->assertSame(1, $review->acknowledgeCorrections($pending));
+        $this->assertSame([['id' => '4', 'version' => '0123456789abcdef']], $fake->acknowledged);
+        $this->assertSame(0, $review->acknowledgeCorrections([]));
+        $this->assertSame('https://review.test/v1/review/corrections/acknowledge', end($fake->calls)['url']);
+    }
+
+    public function testCorrectionsFromSupertextItselfAreNotFound(): void
+    {
+        $fake = new FakeSupertext(failStatus: 404);
+
+        try {
+            (new SupertextClient($fake->client(), 'test-key', 'https://api.test/v1'))->pendingCorrections();
+            $this->fail('Expected an exception');
+        } catch (SupertextException $e) {
+            $this->assertSame('not_found', $e->errorCode);
+        }
+    }
 }

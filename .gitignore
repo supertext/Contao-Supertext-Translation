@@ -5,5 +5,7 @@
 .env
 .env.local
 /test/docs/node_modules/
+/test/docs/movie/out/
 /test/e2e/node_modules/
 /test/e2e/artifacts/
+/test/docs/movie/voice-cache/

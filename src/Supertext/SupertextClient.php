@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Supertext\ContaoTranslation\Supertext;
 
+use Supertext\ContaoTranslation\Reporting\Reporting;
 use Supertext\ContaoTranslation\Sdk\V1\Client;
+use Supertext\ContaoTranslation\Sdk\V1\Correction;
 use Supertext\ContaoTranslation\Sdk\V1\SupertextException as SdkException;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
@@ -33,9 +35,21 @@ class SupertextClient
         'testing' => 'https://api.testing.supertext.com/v1/',
     ];
 
+    /**
+     * Supertext's review service (translation proxy of Supertext Localization Review). It speaks
+     * the same API and forwards to the live Supertext API, keeping every translation so reviewers
+     * can correct them on the website. Used for website roots with *Translation review* on.
+     */
+    public const REVIEW_URL = 'https://localizationreview-production.up.railway.app/v1/';
+
     private readonly Client $sdk;
 
     private readonly bool $hasApiKey;
+
+    /** @var \Closure(): self|null builds the client for the review service (null: none) */
+    private readonly \Closure|null $makeReviewClient;
+
+    private self|null $reviewClient = null;
 
     /**
      * @param \Closure(int): void|null $sleep sleeps the given milliseconds (tests)
@@ -47,7 +61,12 @@ class SupertextClient
         int $pollIntervalMs = 2000,
         int $timeoutMs = 180_000,
         \Closure|null $sleep = null,
+        string $reviewUrl = '',
     ) {
+        $reviewUrl = trim($reviewUrl);
+        $this->makeReviewClient = '' === $reviewUrl || rtrim($reviewUrl, '/') === rtrim($baseUrl, '/')
+            ? null
+            : static fn (): self => new self($httpClient, $apiKey, $reviewUrl, $pollIntervalMs, $timeoutMs, $sleep);
         $this->hasApiKey = '' !== trim((string) preg_replace('/^\s*Supertext-Auth-Key(?:\s+|$)/i', '', $apiKey));
 
         // Tests inject $sleep (returns at once): the SDK's clock then counts the slept
@@ -66,7 +85,8 @@ class SupertextClient
             baseUrl: $baseUrl,
             pollInterval: $pollIntervalMs / 1000,
             timeout: $timeoutMs / 1000,
-            userAgent: 'Contao-Supertext-Translation',
+            // The bundle's version too, so Supertext and the review service see which release calls.
+            userAgent: Reporting::PLUGIN_NAME.'/'.Reporting::pluginVersion(),
             transport: new SymfonyHttpTransport($httpClient),
             sleep: $sdkSleep,
             clock: $clock,
@@ -76,7 +96,8 @@ class SupertextClient
     /**
      * Factory for the service container: `$apiUrl` (explicit URL) wins over
      * `$environment`; both may come from environment variables, so they are resolved
-     * here at runtime.
+     * here at runtime. `$reviewUrl` is the review service for roots with *Translation
+     * review* on ('' = review off everywhere).
      */
     public static function create(
         HttpClientInterface $httpClient,
@@ -85,8 +106,9 @@ class SupertextClient
         string|null $environment,
         int $pollIntervalMs = 2000,
         int $timeoutMs = 180_000,
+        string|null $reviewUrl = self::REVIEW_URL,
     ): self {
-        return new self($httpClient, trim((string) $apiKey), self::baseUrl($apiUrl, $environment), $pollIntervalMs, $timeoutMs);
+        return new self($httpClient, trim((string) $apiKey), self::baseUrl($apiUrl, $environment), $pollIntervalMs, $timeoutMs, reviewUrl: (string) $reviewUrl);
     }
 
     /**
@@ -108,6 +130,19 @@ class SupertextClient
     public function hasApiKey(): bool
     {
         return $this->hasApiKey;
+    }
+
+    /**
+     * The client to use for a website root: the review service when its *Translation review*
+     * is on (same key, same protocol), else this one. Without a review URL, always this one.
+     */
+    public function forReview(bool $review): self
+    {
+        if (!$review || null === $this->makeReviewClient) {
+            return $this;
+        }
+
+        return $this->reviewClient ??= ($this->makeReviewClient)();
     }
 
     /**
@@ -145,6 +180,33 @@ class SupertextClient
         } finally {
             $this->sdk->delete($fileId);
         }
+    }
+
+    /**
+     * Corrections reviewers made that this site hasn't written yet (only the review service
+     * answers this; see forReview()). Follows all pages.
+     *
+     * @return list<Correction>
+     */
+    public function pendingCorrections(string|null $targetLang = null): array
+    {
+        return $this->call(fn () => $this->sdk->pendingCorrections($targetLang));
+    }
+
+    /**
+     * Confirms corrections written into Contao; returns how many the review service accepted.
+     *
+     * @param list<Correction> $corrections
+     */
+    public function acknowledgeCorrections(array $corrections): int
+    {
+        return [] === $corrections ? 0 : $this->call(fn () => $this->sdk->acknowledgeCorrections($corrections));
+    }
+
+    /** Whether this client talks to the review service (a review URL is configured). */
+    public function reviewEnabled(): bool
+    {
+        return null !== $this->makeReviewClient;
     }
 
     /** Cost-free check that the API key is accepted. */

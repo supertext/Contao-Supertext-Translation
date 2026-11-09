@@ -7,12 +7,12 @@ For administrators who set up a Contao installation. Editors: see the [User guid
 | | |
 | --- | --- |
 | Contao | 5.7 (LTS) or 6.0 |
-| PHP | 8.3 or newer (Contao 6 needs 8.4) |
+| PHP | 8.3 or newer (Contao 6 needs 8.4); tested on 8.3, 8.4 and 8.5 |
 | Database | MySQL 8.0/8.4 or MariaDB 10.11+ (as required by Contao; MySQL 9 is not supported by Contao) |
 | Multilingual site | One **website root per language** in the site structure, each with its own *Language* setting (e.g. `en`, `de-CH`, `fr-CH`) |
 | Supertext | A Supertext account and an API key with access to AI translation (see [API key](#api-key)) |
 
-The server must reach `https://api.supertext.com` over HTTPS.
+The server must reach `https://api.supertext.com` over HTTPS (and, for [Translation review](#translation-review), Supertext's review service).
 
 Recommended: [terminal42/contao-changelanguage](https://extensions.contao.org/?p=terminal42%2Fcontao-changelanguage) for the language switcher on the website. When it is installed, translated pages are linked to their source automatically, so the switcher works without extra steps. On Contao 6, its current release (3.9) still requires some Symfony 7 packages; install it with `composer require -W terminal42/contao-changelanguage` so Composer may adjust them.
 
@@ -62,6 +62,8 @@ Administrators can always translate. For other users:
 
 The *Translate with Supertext* icon only appears for users with the permission, and the translate screen only offers languages whose website root the user may edit.
 
+**Export for translation / Import translation** (XLIFF 1.2 or HTML files, on the translate screen) need the same permission. An import writes only into pages the user may read and language roots the user may edit; each page and language in the file is checked. Uploads are limited to 10 MB (also keep PHP's `upload_max_filesize` and `post_max_size` at least that large, or larger files are refused earlier) and are only read in memory, never stored. There is nothing to configure, and no API key is needed for files.
+
 ## Interface languages
 
 The bundle's screens, the permission and its messages are available in English, German, French and Italian. They follow each back-end user's language (user menu → *Profile* → *Back end language*); other languages fall back to English. This is independent of the website languages below.
@@ -70,7 +72,31 @@ The bundle's screens, the permission and its messages are available in English, 
 
 ![Settings of the German website root: Language de-CH, Language fallback off](images/07-language-root.png)
 
-Each website root's *Language* needs a Supertext language. Supertext accepts exactly these target codes (from its `features` list, October 2026):
+Each website root's *Language* needs a Supertext language. Choose it in the root's own settings: **Content → Pages → edit the website root (pencil) → section *Supertext***:
+
+![Settings of the German website root, Supertext section: Supertext language "German (Switzerland) (de-CH)" preselected; Formal or informal with the note that politeness in config/config.yaml overrides it; the Translation review checkbox below, not ticked](images/09-root-supertext-language.png)
+
+- **Supertext language**: a select with all of Supertext's languages, shown as "Name (code)" in your back-end language, e.g. *Deutsch (Schweiz) (de-CH)*. It is used for both directions: when this root is translated into, and when it is the source (then without region: `de-CH` → `de`).
+- **Formal or informal**: *Supertext default*, *Formal* (Sie, vous, Lei) or *Informal*. It only appears when the chosen Supertext language offers it (not for English, Swiss German, Romansh, Albanian and Serbian); choosing the Supertext language reloads the form.
+- **Translation review**: on or off, see [Translation review](#translation-review).
+
+The select is **preselected** for every root, so most sites need no setup:
+
+1. the root's language when it is itself a Supertext code (apart from upper/lower case and `_`/`-`): `de-CH`, `fr-CH`, `it-CH`, `es`, `nl`;
+2. else the usual Supertext language for it:
+
+   | Root language | Preselected |
+   | --- | --- |
+   | `de`, `en`, `fr`, `it`, `pt` | `de-DE`, `en-US`, `fr-FR`, `it-IT`, `pt-PT` |
+   | `zh`, `zh-CN`, `zh-SG` / `zh-TW`, `zh-HK`, `zh-MO` | `zh-Hans` / `zh-Hant` |
+   | `sr`, `sr-Latn-RS` | `sr-Latn` |
+   | a region of a language Supertext offers without one | that language: `es-ES` → `es`, `nl-NL` → `nl`, `nb-NO` → `nb` |
+
+3. else **"— choose —"**: Supertext has no usual language for it, e.g. `de-LI`, `en-IE`, `fr-BE`, `gsw` or `sr-RS`. Choose one before translating; until then the translate screen marks the language *no Supertext language yet* (it can't be selected), and nothing is sent for it.
+
+A root that is never saved with another choice keeps following its *Language*: only a Supertext language that differs from the preselected one is stored. The select only accepts Supertext's codes.
+
+Supertext's target codes (from its `features` list, October 2026):
 
 | Language | Supertext codes |
 | --- | --- |
@@ -79,18 +105,13 @@ Each website root's *Language* needs a Supertext language. Supertext accepts exa
 | Swiss German | `gsw-u-sd-chzh` (Zurich), `gsw-u-sd-chbe` (Bern) |
 | All others, without region | `bg`, `cs`, `da`, `el`, `es`, `fi`, `hr`, `hu`, `ja`, `ko`, `nb`, `nl`, `pl`, `rm`, `ru`, `sk`, `sl`, `sq`, `sv`, `tr` |
 
-- A root whose language **is** one of these codes (apart from upper/lower case and `_`/`-`) needs no setup: `de-CH`, `fr-CH`, `it-CH`, `es`, `nl`. The source language is sent without region (`de-CH` → `de`, `en` stays `en`).
-- **Every other language needs an entry in `language_map`**, for example a root with the language `de` (Germany, Switzerland or Austria?), `en` as a target (`en-US` or `en-GB`?), `pt`, `zh-CN` or `no`. The bundle never guesses a region: an unmapped language shows *no Supertext language yet* on the translate screen (it can't be selected), and a translation into it stops with *The language … has no Supertext language yet*; nothing is sent for it.
-- Formal/informal address (`politeness`) isn't offered for English, Swiss German, Romansh, Albanian and Serbian. The translate screen warns when it is set for such a language; leave those on `default`, or Supertext rejects the translation.
-
-Configure both in `config/config.yaml` and clear the cache:
+**Override for automated setups:** `language_map` and `politeness` in `config/config.yaml` win over the roots' settings (clear the cache after changing them). The root's settings then show *Set to … by language_map in config/config.yaml* under the field. Earlier versions only had this configuration: it keeps working as it is, nothing needs to be migrated.
 
 ```yaml
 supertext_translation:
     language_map:
-        de: de-CH           # Contao language => Supertext code (one of the codes above)
+        de-LI: de-CH        # Contao language => Supertext code (one of the codes above)
         en: en-GB           # used for both directions: as the source, en-GB is sent as en
-        zh-CN: zh-Hans
     politeness:
         de-CH: more         # formal ("Sie"); "less" = informal
 ```
@@ -107,13 +128,23 @@ Target languages are the other website roots **of the same domain** (same *Domai
 | --- | --- | --- |
 | `api_key` | `%env(SUPERTEXT_API_KEY)%` | Supertext API key. |
 | `environment` | `live` | `live`, `staging` or `testing` Supertext API. May be an env variable. |
-| `api_url` | `''` | Explicit API base URL (e.g. a proxy); overrides `environment`. |
-| `language_map` | `{}` | Contao language → Supertext code (e.g. `de: de-CH`, `zh-CN: zh-Hans`). Needed for every root language that isn't itself a Supertext code (see [Language setup](#language-setup)); there are no default regions. For the source, the mapped code's language is sent (`de-CH` → `de`). |
-| `politeness` | `{}` | Contao language → `default`, `more` (formal) or `less` (informal). |
+| `api_url` | `''` | Explicit API base URL; overrides `environment`. For [Translation review](#translation-review) use the website roots' checkbox instead. |
+| `review_corrections` | `true` | Write reviewers' corrections into the translations every hour (Contao's cron, see [Translation review](#translation-review)). `false`: only with `supertext:review:apply`. |
+| `review_url` | Supertext's review service | Address of the review service for roots with *Translation review* on. `''` turns review off for every root. Only change it when Supertext gives you another address. |
+| `language_map` | `{}` | Optional: Contao language → Supertext code (e.g. `de: de-CH`), overrides the website roots' *Supertext language* (see [Language setup](#language-setup)). For the source, the mapped code's language is sent (`de-CH` → `de`). |
+| `politeness` | `{}` | Optional: Contao language → `default`, `more` (formal) or `less` (informal), overrides the roots' *Formal or informal*. Sent as it is, also for a language without formal/informal (the translate screen warns). |
 | `version_reports` | `true` | *Send version information to Supertext* (see [below](#version-information-and-the-api-key-check)). The environment variable `SUPERTEXT_VERSION_REPORTS` (`0`, `false`, `off`, `no` or `1`, `true`, `on`, `yes`) wins over this setting. |
 | `poll_interval` | `2` | Seconds between status checks while Supertext translates. |
 | `timeout` | `180` | Maximum seconds to wait for one page and language. |
 | `fields` | see below | Which fields are translated, per table. |
+
+In each website root (Content → Pages → edit the root → *Supertext*):
+
+| Field | Default | Description |
+| --- | --- | --- |
+| *Supertext language* | preselected (see [Language setup](#language-setup)) | Supertext code for this root's language, both directions. Column `tl_page.supertext_language` (`''` = the preselected one). |
+| *Formal or informal* | *Supertext default* | Only shown where the Supertext language offers it. Column `tl_page.supertext_politeness`. |
+| *Translation review* | off | Translations into this root go through Supertext's review service (see [Translation review](#translation-review)). Column `tl_page.supertext_review`. |
 
 ### Translated fields
 
@@ -134,6 +165,21 @@ supertext_translation:
 ```
 
 Not translated: page aliases (a new alias is generated from the translated title), URLs, images and other files, code and HTML elements, form fields, news, events and FAQ (see the roadmap in the [Developer guide](DEVELOPER.md)).
+
+## Translation review
+
+With **Translation review**, people check the translations on the website itself and correct them there: customers or Supertext linguists open the original and the translated page side by side in Chrome with the *Supertext Localization Review* extension and fix texts in a side panel. Their corrections come back into Contao.
+
+Turn it on per language in the website root that is translated **into** (Content → Pages → edit the website root, e.g. *Deutsch* → section *Supertext* → tick **Translation review** → save). Untick it to turn it off again; nothing else changes.
+
+- Translations into that root then go through Supertext's review service instead of directly to Supertext. It answers exactly like Supertext and passes everything on with your API key, so billing, languages, formal/informal and error messages stay the same.
+- The review service keeps every translation of your account. A text it has translated before gets the same translation again (without a new Supertext call), and once a reviewer has corrected it, the corrected text.
+- **Corrections come into Contao by themselves**, every hour: the bundle fetches the corrections for each language with *Translation review* from the review service and writes them into the translated pages, articles and content elements (with version history). A correction is only written where the translated text is still exactly what Supertext delivered: **texts an editor changed are never overwritten**; such corrections arrive when the page is translated again (which, as always, overwrites manual changes). To fetch them right away: `vendor/bin/contao-console supertext:review:apply` (shows per language what was written and what was skipped).
+- The hourly run uses Contao's cron (the *Command scheduler*): with a server cron job for `contao:cron` (recommended) or Contao's built-in web cron, which runs on page views. `review_corrections: false` turns the hourly run off.
+- Corrections can only be written for pages translated with *Translation review* on since this version: older translations get them the next time they are translated.
+- Reviewers get a review link for your site from Supertext; nothing to set up in Contao.
+- The review service works with keys of the **live** Supertext API. With `environment: staging` or `testing`, leave review off.
+- *Export for translation* and *Import translation* don't use the review service. The automatic API key check still goes directly to Supertext.
 
 ## Version information and the API key check
 
@@ -169,14 +215,19 @@ Remove the package (Contao Manager or `composer remove supertext/contao-supertex
 | "Authentication failure" | Wrong key, or a key for another environment (`live` vs `staging`). Generate a new key at <https://www.supertext.com/en/integrations/api> (Admin role required). |
 | "Too many requests to Supertext" | Supertext's per-second rate limit. Each request is retried up to 4 times automatically; if it still appears, translate fewer languages at once and try again. |
 | "Your Supertext translation limit is exceeded" | The Supertext subscription quota is used up. |
-| *no Supertext language yet* next to a language / "The language … has no Supertext language yet" | The root's language isn't a Supertext code: add it to `language_map` (see [Language setup](#language-setup)) and clear the cache. |
-| "Supertext does not support this language pair" | A mapped code Supertext doesn't offer (e.g. `es-ES` instead of `es`, `zh-CN` instead of `zh-Hans`, or the same language as the source); fix the `language_map` entry. The log has the codes that were sent. |
-| "Supertext offers no formal or informal tone for this language" | `politeness` sets `more`/`less` for a language without it (English, Swiss German, Romansh, Albanian, Serbian); remove that entry. |
+| *no Supertext language yet* next to a language / "The language … has no Supertext language yet" | Supertext has no usual language for the root's language (e.g. `de-LI`, `en-IE`): choose its *Supertext language* in the root's settings (see [Language setup](#language-setup)). |
+| The *Supertext section* is missing in a website root | Run the database update (it adds `supertext_language`, `supertext_politeness` and `supertext_review` to `tl_page`); non-admin users also need these fields allowed in their group's *Allowed fields* of pages. |
+| "Authentication failure" only for languages with *Translation review* | The review service only works with keys of the live Supertext API: with `environment: staging`/`testing` (or `api_url`) leave review off. |
+| Reviewers' corrections don't show up in Contao | Check that the root's *Translation review* is ticked and Contao's cron runs (or run `supertext:review:apply`, which lists skipped corrections: *changed* = an editor changed the text, *source_changed* = the source text changed, *not_translated* = no translation of that page yet). Skipped ones arrive with the next translation of the page. |
+| "Supertext does not support this language pair" | A `language_map` code Supertext doesn't offer (e.g. `es-ES` instead of `es`), or source and target are the same language; fix the entry or the roots' *Supertext language*. The log has the codes that were sent. |
+| "Supertext offers no formal or informal tone for this language" | `politeness` in `config/config.yaml` sets `more`/`less` for a language without it (English, Swiss German, Romansh, Albanian, Serbian); remove that entry. (The root's *Formal or informal* is never sent for such a language.) |
 | "Supertext rejected the API key" in the API key check | The key is wrong or revoked. Check that the whole key was copied into `SUPERTEXT_API_KEY`, or generate a new one at <https://www.supertext.com/en/integrations/api> (Admin role required). No Supertext account yet? Create one at <https://www.supertext.com/person/en/account/signin>. Clear the cache and open the translate screen again. |
 | "The API key couldn't be checked because Supertext can't be reached" | The Contao server can't reach `api.supertext.com` (firewall, proxy, DNS). Translations need the same connection. |
 | "Not checked yet" in the API key check | The check runs after the page was sent; reload the screen. If it stays, run the database update (the table `tl_supertext_state` is missing). |
 | "Timed out waiting…" | Very long page or slow service: raise `timeout`, and the web server timeouts. |
 | "Insert tags were moved to the end…" | The translation lost the position of an insert tag; it was appended so nothing breaks. Check the text. |
+| "The file is too large (at most 10 MB)" for a smaller file | PHP's `upload_max_filesize` or `post_max_size` is lower than the file; raise them. |
+| "This file belongs to another system" / "This file wasn't exported by the Supertext extension" | The file was exported by another Supertext plugin, or the translation tool removed the file's header (HTML: the `supertext:` meta tags; XLIFF: the `<file>` attributes). Export again and keep them. |
 | Language switcher doesn't show a translation | The translated page is still unpublished, or changelanguage isn't installed. |
 
 Errors are also written to the Contao system log.

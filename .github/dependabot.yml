@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # PHPUnit 13 needs PHP 8.4; the bundle supports PHP 8.3 (CI tests 8.3).
+      - dependency-name: "phpunit/phpunit"
+        versions: [">=13"]
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]

@@ -115,13 +115,21 @@ async function translateEnglishSite(label) {
 		if (usable) await box.check();
 	}
 	const started = Date.now();
-	await Promise.all([page.waitForNavigation({ timeout: 900_000 }), form.locator('button.tl_submit').click()]);
+	// The click waits for the navigation too: give it the translation's time, not the default 30 s.
+	await Promise.all([page.waitForNavigation({ timeout: 900_000 }), form.locator('button.tl_submit').click({ timeout: 900_000 })]);
 	await page.screenshot({ path: `${artifacts}${label}-result.png`, fullPage: true });
 	const confirms = await form.locator('.tl_confirm').allTextContents();
 	const errors = await form.locator('.tl_error').allTextContents();
 	console.log(`${label}: ${Math.round((Date.now() - started) / 1000)} s`);
 	check(`${label}: every language translated`, confirms.length === targets.length, `${confirms.length}/${targets.length}`);
 	check(`${label}: no errors from Supertext`, errors.length === 0, errors.map((e) => e.replace(/\s+/g, ' ').trim()).join(' | '));
+	// The summary's page links open the page's articles (with the request token, not "Invalid token").
+	const link = form.locator('.tl_confirm a').first();
+	if ((await link.count()) === 1) {
+		await Promise.all([page.waitForNavigation(), link.click()]);
+		const listing = await page.locator('.tl_listing').count();
+		check(`${label}: summary link opens the page's articles`, listing > 0 && !page.url().includes('/contao/confirm'), page.url());
+	}
 }
 
 // --- Log in as the editor ----------------------------------------------------------------

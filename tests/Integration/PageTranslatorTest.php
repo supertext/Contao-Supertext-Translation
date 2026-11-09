@@ -12,9 +12,12 @@ use Supertext\ContaoTranslation\Reporting\Reporting;
 use Supertext\ContaoTranslation\Supertext\SupertextClient;
 use Supertext\ContaoTranslation\Tests\FakeSupertext;
 use Supertext\ContaoTranslation\Translation\ContaoHooks;
+use Supertext\ContaoTranslation\Sdk\Files\TranslationFiles;
 use Supertext\ContaoTranslation\Translation\FieldMap;
+use Supertext\ContaoTranslation\Translation\FileExchange;
 use Supertext\ContaoTranslation\Translation\Languages;
 use Supertext\ContaoTranslation\Translation\PageTranslator;
+use Supertext\ContaoTranslation\Translation\ReviewCorrections;
 use Symfony\Component\Dotenv\Dotenv;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
@@ -67,7 +70,7 @@ final class PageTranslatorTest extends TestCase
     private function translator(FakeSupertext|null $fake = null, array $fieldOverrides = [], Languages|null $languages = null): PageTranslator
     {
         $container = self::$kernel->getContainer();
-        $client = new SupertextClient(($fake ?? $this->fake)->client(), 'test-key', 'https://api.test/v1', 1000, 10_000, static function (): void {});
+        $client = new SupertextClient(($fake ?? $this->fake)->client(), 'test-key', 'https://api.test/v1', 1000, 10_000, static function (): void {}, 'https://review.test/v1/');
         $hooks = new ContaoHooks($container->get('contao.framework'), $this->db, $container->get('contao.slug'));
 
         return new PageTranslator($this->db, $client, new FieldMap($fieldOverrides), $languages ?? new Languages([], ['de-CH' => 'more']), $hooks);
@@ -223,6 +226,46 @@ final class PageTranslatorTest extends TestCase
         $this->assertSame(3, \count($all->targets[$s['de']]['pages']));
     }
 
+    public function testTranslationFileRoundTrip(): void
+    {
+        $s = $this->site();
+        $translator = $this->translator();
+        $exchange = new FileExchange($translator, new Languages());
+
+        $file = $exchange->export($s['about'], [$s['fr']], FileExchange::FORMAT_XLIFF);
+        $this->assertSame('contao-'.$s['about'].'-fr-CH.xlf', $file['filename']);
+        $translated = (string) preg_replace_callback('~<source>(.*?)</source>~s', static fn ($m) => '<source>'.$m[1].'</source><target>'.str_replace(['About', 'We '], ['FR About', 'FR We '], $m[1]).'</target>', $file['content']);
+
+        $result = $exchange->import(TranslationFiles::read($translated)[0], false, static fn () => true);
+
+        $this->assertNull($result['error'], json_encode($result));
+        $this->assertSame([], $this->fake->calls(static fn () => true), 'no API call');
+        $fr = $this->row('tl_page', (int) $result['targetPageId']);
+        $this->assertSame($s['fr'], (int) $fr['pid']);
+        $this->assertSame(0, (int) $fr['published'], 'new translations are unpublished');
+        $this->assertSame('FR About & us', html_entity_decode($fr['title']));
+
+        $article = (int) $this->db->fetchOne('SELECT id FROM tl_article WHERE pid = ?', [$fr['id']]);
+        $text = (string) $this->db->fetchOne("SELECT text FROM tl_content WHERE ptable = 'tl_article' AND pid = ? AND type = 'text'", [$article]);
+        $this->assertStringContainsString('{{link_url::'.$s['home'].'}}', $text, 'insert tags restored');
+        $this->assertStringContainsString('FR We', $text);
+
+        // A text translated by hand afterwards is kept when the file has no translation for it.
+        $this->db->update('tl_page', ['title' => 'Von Hand'], ['id' => $fr['id']]);
+        $teaserOnly = (string) preg_replace_callback(
+            '~(<trans-unit id="([^"]+)"[^>]*>\s*<source>(.*?)</source>)~s',
+            static fn ($m) => str_starts_with($m[2], 'a.') ? $m[1].'<target>FR2 '.$m[3].'</target>' : $m[1],
+            $exchange->export($s['about'], [$s['fr']], FileExchange::FORMAT_XLIFF)['content'],
+        );
+        $second = $exchange->import(TranslationFiles::read($teaserOnly)[0], false, static fn () => true);
+
+        $this->assertSame($fr['id'], $second['targetPageId']);
+        $this->assertGreaterThan(0, $second['counts']['untranslated']);
+        $this->assertSame('Von Hand', $this->row('tl_page', (int) $fr['id'])['title']);
+        $this->assertStringContainsString('FR2', (string) $this->db->fetchOne('SELECT teaser FROM tl_article WHERE id = ?', [$article]));
+        $this->assertStringContainsString('FR We', (string) $this->db->fetchOne("SELECT text FROM tl_content WHERE ptable = 'tl_article' AND pid = ? AND type = 'text'", [$article]), 'untranslated element keeps its translation');
+    }
+
     public function testOnlyOffersLanguageRootsOfTheSameSite(): void
     {
         $s = $this->site();
@@ -259,15 +302,147 @@ final class PageTranslatorTest extends TestCase
     public function testLanguageWithoutSupertextCodeFailsAndSendsNothing(): void
     {
         $s = $this->site();
-        // Bare "de" is no Supertext target (de-DE, de-CH or de-AT?): no guessing.
-        $this->db->update('tl_page', ['language' => 'de'], ['id' => $s['de']]);
+        // German (Liechtenstein) has no usual Supertext language (de-DE, de-CH or de-AT?): no guessing.
+        $this->db->update('tl_page', ['language' => 'de-LI'], ['id' => $s['de']]);
         $report = $this->translator()->translatePage($s['about'], [$s['de'], $s['fr']]);
 
         $this->assertSame('unsupported_language', $report->targets[$s['de']]['errorCode']);
-        $this->assertSame(['de'], $report->targets[$s['de']]['errorParams']);
+        $this->assertSame(['de-LI'], $report->targets[$s['de']]['errorParams']);
         $this->assertTrue($report->targets[$s['fr']]['ok'], 'the other languages are translated');
         $this->assertSame(['fr-CH'], array_column($this->fake->submitted, 'target'));
         $this->assertSame(0, (int) $this->db->fetchOne('SELECT COUNT(*) FROM tl_page WHERE pid = ?', [$s['de']]));
+    }
+
+    public function testBareLanguageUsesTheDefault(): void
+    {
+        $s = $this->site();
+        $this->db->update('tl_page', ['language' => 'de'], ['id' => $s['de']]);
+        $report = $this->translator()->translatePage($s['about'], [$s['de']]);
+
+        $this->assertTrue($report->targets[$s['de']]['ok']);
+        $this->assertSame('de-DE', $this->fake->submitted[0]['target']);
+    }
+
+    public function testRootSettingsChooseTheSupertextCodeAndTone(): void
+    {
+        $s = $this->site();
+        $this->db->update('tl_page', ['language' => 'de', 'supertext_language' => 'de-AT', 'supertext_politeness' => 'less'], ['id' => $s['de']]);
+        $this->db->update('tl_page', ['supertext_language' => 'fr-FR', 'supertext_politeness' => 'more'], ['id' => $s['fr']]);
+        $this->db->update('tl_page', ['language' => 'en-IE', 'supertext_language' => 'en-GB'], ['id' => $s['en']]);
+        $report = $this->translator(languages: new Languages(['fr-CH' => 'fr-CH']))->translatePage($s['about'], [$s['de'], $s['fr']]);
+
+        $this->assertTrue($report->targets[$s['de']]['ok']);
+        $this->assertTrue($report->targets[$s['fr']]['ok']);
+        $byTarget = array_column($this->fake->submitted, null, 'target');
+        $this->assertSame('less', $byTarget['de-AT']['politeness'] ?? null, 'the root\'s Supertext language and tone');
+        $this->assertSame('en', $byTarget['de-AT']['source'], 'the source root\'s choice, in its source form');
+        $this->assertArrayHasKey('fr-CH', $byTarget, 'language_map overrides the root\'s choice');
+        $this->assertSame('more', $byTarget['fr-CH']['politeness'] ?? null);
+        $this->assertSame('', $this->row('tl_page', (int) $report->targets[$s['de']]['pages'][0]['id'])['supertext_language'], 'not copied to pages');
+    }
+
+    public function testRootsWithTranslationReviewGoThroughTheReviewService(): void
+    {
+        $s = $this->site();
+        $this->db->update('tl_page', ['supertext_review' => 1], ['id' => $s['de']]);
+        $report = $this->translator()->translatePage($s['about'], [$s['de'], $s['fr']]);
+
+        $this->assertTrue($report->targets[$s['de']]['ok']);
+        $this->assertTrue($report->targets[$s['fr']]['ok']);
+        $hosts = [];
+
+        foreach ($this->fake->calls as $call) {
+            $hosts[(string) parse_url($call['url'], \PHP_URL_HOST)][] = $call['method'];
+        }
+
+        $this->assertSame(['POST', 'GET', 'GET', 'DELETE'], $hosts['review.test'] ?? null, 'German: upload, status, download and delete through the review service');
+        $this->assertSame(['POST', 'GET', 'GET', 'DELETE'], $hosts['api.test'] ?? null, 'French: directly to Supertext');
+        $page = $this->row('tl_page', (int) $report->targets[$s['de']]['pages'][0]['id']);
+        $this->assertFalse((bool) $page['supertext_review'], 'not copied to pages');
+    }
+
+    /** What the fake delivered for a segment of the source document (protected HTML). */
+    private function delivered(int $pageId, string $key, string $target = 'de-CH'): string
+    {
+        $segment = $this->translator()->segments($pageId)?->segments()[$key] ?? '';
+
+        return (string) preg_replace('/^((?:<[a-z][^>]*>)*)/', '$1['.$target.'] ', $segment);
+    }
+
+    public function testReviewCorrectionsAreWrittenOnlyWhereUnchanged(): void
+    {
+        $s = $this->site();
+        $report = $this->translator()->translatePage($s['about'], [$s['de']]);
+        $dePage = (int) $report->targets[$s['de']]['pages'][0]['id'];
+        $deText = (int) $this->db->fetchOne('SELECT id FROM tl_content WHERE supertext_source = ?', [$s['text']]);
+        $deList = (int) $this->db->fetchOne('SELECT id FROM tl_content WHERE supertext_source = ?', [$s['list']]);
+        $t = $this->translator();
+        $source = fn (string $key) => $t->segments($s['about'])?->segments()[$key] ?? '';
+        $apply = function (string $key, string $html, string|null $previous = null, int|null $root = null) use ($t, $s, $source): string {
+            return $t->applyCorrection($key, $root ?? $s['de'], $source($key), $previous ?? $this->delivered($s['about'], $key), $html);
+        };
+
+        // Rich text with an insert tag (placeholders restored), a list item, a headline.
+        $text = 'c.'.$s['text'].'.text';
+        $corrected = str_replace('translate', 'übersetzen', $this->delivered($s['about'], $text));
+        $this->assertSame(PageTranslator::CORRECTION_WRITTEN, $apply($text, $corrected));
+        $this->assertStringContainsString('übersetzen', $this->row('tl_content', $deText)['text']);
+        $this->assertStringContainsString('{{link_url::'.$s['home'].'}}', $this->row('tl_content', $deText)['text'], 'insert tags restored');
+        $this->assertSame(PageTranslator::CORRECTION_WRITTEN, $apply('c.'.$s['list'].'.listitems.1', 'Zwei'));
+        $this->assertSame(['[de-CH] One', 'Zwei'], unserialize($this->row('tl_content', $deList)['listitems']), 'the other items keep their translation');
+        $this->assertSame(PageTranslator::CORRECTION_WRITTEN, $apply('c.'.$s['text'].'.headline.value', 'Wer wir sind'));
+        $this->assertSame('Wer wir sind', unserialize($this->row('tl_content', $deText)['headline'])['value']);
+
+        // An editor changed the German title: left alone.
+        $this->db->update('tl_page', ['title' => 'Über uns (von Hand)'], ['id' => $dePage]);
+        $this->assertSame(PageTranslator::CORRECTION_CHANGED, $apply('p.'.$s['about'].'.title', 'Über uns'));
+        $this->assertSame('Über uns (von Hand)', $this->row('tl_page', $dePage)['title']);
+        // A correction written once no longer matches what was delivered.
+        $this->assertSame(PageTranslator::CORRECTION_CHANGED, $apply($text, 'Etwas anderes'));
+
+        // The source text changed since; not translated into that root (yet); not this site's segment.
+        $this->assertSame(PageTranslator::CORRECTION_SOURCE_CHANGED, $t->applyCorrection('c.'.$s['list'].'.listitems.0', $s['de'], 'Uno', '[de-CH] One', 'Eins'));
+        $this->assertSame(PageTranslator::CORRECTION_NOT_TRANSLATED, $apply('c.'.$s['list'].'.listitems.0', 'Eins', null, $s['fr']));
+        $this->assertSame(PageTranslator::CORRECTION_NOT_TRANSLATED, $t->applyCorrection('p.'.$s['team'].'.title', $s['de'], 'Our team', '[de-CH] Our team', 'Unser Team'));
+        $this->assertSame(PageTranslator::CORRECTION_UNKNOWN, $apply('c.999999.text', 'x'));
+        $this->assertSame(PageTranslator::CORRECTION_UNKNOWN, $t->applyCorrection('0', $s['de'], 'x', 'x', 'y'));
+        $this->assertSame(PageTranslator::CORRECTION_UNKNOWN, $t->applyCorrection('c.'.$s['text'].'.type', $s['de'], 'text', 'text', 'x'), 'only translated fields');
+        $this->assertSame(PageTranslator::CORRECTION_UNKNOWN, $apply('c.'.$s['list'].'.listitems.0', 'Eins', null, $s['en']), 'only target roots of the same site');
+    }
+
+    public function testReviewCorrectionsRunPerRootAndAcknowledgeWhatWasWritten(): void
+    {
+        $s = $this->site();
+        $this->translator()->translatePage($s['about'], [$s['de'], $s['fr']]);
+        $this->db->update('tl_page', ['supertext_review' => 1], ['id' => $s['de']]);
+        $source = fn (string $key) => $this->translator()->segments($s['about'])?->segments()[$key] ?? '';
+        $item = fn (string $id, string $key, string $html, string $target = 'de-CH') => [
+            'id' => $id, 'st_id' => $key, 'source_lang' => 'en', 'target_lang' => $target, 'politeness' => 'more',
+            'source_html' => $source($key), 'previous_html' => $this->delivered($s['about'], $key, $target), 'html' => $html,
+            'status' => 'corrected', 'corrected_at' => '2026-10-19T08:00:00Z', 'version' => '0123456789abcdef',
+        ];
+        $fake = new FakeSupertext();
+        $fake->corrections = [
+            $item('1', 'c.'.$s['list'].'.listitems.0', 'Eins'),
+            $item('2', 'c.999999.text', 'x'),
+            $item('3', 'c.'.$s['list'].'.listitems.1', 'Deux', 'fr-CH'),
+        ];
+        $client = new SupertextClient($fake->client(), 'test-key', 'https://api.test/v1', 1000, 10_000, static function (): void {}, 'https://review.test/v1/');
+        $run = (new ReviewCorrections($this->db, $client, $this->translator(), new Languages([], ['de-CH' => 'more'])))->run();
+
+        $this->assertNull($run['error']);
+        $this->assertSame([['id' => $s['de'], 'title' => 'Deutsch', 'language' => 'de-CH', 'counts' => ['written' => 1, 'unknown' => 1]]], $run['roots'], 'only roots with Translation review, only their language');
+        $this->assertSame(1, $run['acknowledged']);
+        $this->assertSame([['id' => '1', 'version' => '0123456789abcdef']], $fake->acknowledged, 'skipped corrections stay pending');
+        $this->assertSame(['https://review.test/v1/review/corrections?target_lang=de-CH&limit=500'], array_column($fake->calls(fn ($c) => 'GET' === $c['method']), 'url'));
+        $deList = (int) $this->db->fetchOne('SELECT c.id FROM tl_content c JOIN tl_article a ON a.id = c.pid WHERE c.supertext_source = ? AND a.pid IN (SELECT id FROM tl_page WHERE pid = ?)', [$s['list'], $s['de']]);
+        $this->assertSame(['Eins', '[de-CH] Two'], unserialize($this->row('tl_content', $deList)['listitems']));
+
+        // No root with Translation review: nothing is asked.
+        $this->db->update('tl_page', ['supertext_review' => 0], ['id' => $s['de']]);
+        $fake->calls = [];
+        $this->assertSame([], (new ReviewCorrections($this->db, $client, $this->translator(), new Languages()))->run()['roots']);
+        $this->assertSame([], $fake->calls);
     }
 
     public function testLanguageMapChoosesTheSupertextCode(): void
