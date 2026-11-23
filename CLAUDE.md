@@ -98,3 +98,7 @@ Lessons from testing against the live API (October 2026), to apply in every plug
 - UI changes: regenerate `docs/images/` with `test/docs/screenshots.mjs` against a fresh demo and the stand-in API (see "Docs screenshots" in `docs/DEVELOPER.md`); new demo content needs entries in `test/docs/translations.json`.
 - Demo movie (`docs/images/demo.gif` in the README): `test/docs/movie.mjs` (`npm run movie`, see "Demo movie" in `docs/DEVELOPER.md`); re-record it when the translate screen changes. Install and configuration movie (MP4 only, not committed): `test/docs/movie-install.mjs` (`npm run movie:install`); re-record it when the installation steps or the root's *Supertext* section change.
 - `demo/` is the Railway demo (Dockerfile `demo/Dockerfile`, context = repo root). The demo setup command must stay idempotent. Demo secrets live only in Railway variables.
+
+## Live E2E runs share one API key (always)
+
+Every push to `main` that touches the plugin, the demo or the tests starts the live E2E run, and all Supertext plugin repos share one Supertext API key, which is rate-limited per second. When the same kind of change goes to several repos, push them one repo at a time, at least 3 minutes apart (a loop with `sleep 180`), never in parallel. Docs-only changes (`docs/`, `README.md`, `CHANGELOG.md`, `CLAUDE.md`) don't start it and can go together. A live run that failed with `RATE_LIMIT_EXCEEDED` collided with another repo's run, it isn't a bug: rerun it on its own.
