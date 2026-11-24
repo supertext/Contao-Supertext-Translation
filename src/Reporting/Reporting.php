@@ -123,7 +123,8 @@ class Reporting
         return self::packageVersion('contao/core-bundle') ?? self::packageVersion('contao/contao');
     }
 
-    public function reporter(Request $request): InstallationReporter
+    /** @param (callable(): iterable<mixed>)|null $languages the language mapping every report of this reporter carries */
+    public function reporter(Request $request, callable|null $languages = null): InstallationReporter
     {
         return new InstallationReporter(
             enabled: $this->enabled(),
@@ -138,6 +139,7 @@ class Reporting
             reportUrl: null === $this->reportUrl || '' === trim($this->reportUrl) ? null : $this->reportUrl,
             transport: new ReportTransport(new SymfonyHttpTransport($this->httpClient)),
             now: $this->now,
+            languages: $languages,
         );
     }
 
@@ -208,6 +210,58 @@ class Reporting
         foreach ($pending as $action => [$request, $httpStatus]) {
             $this->run($action, $request, $httpStatus);
         }
+    }
+
+    /**
+     * *Send configuration to Supertext* (administrators, translate screen): the installed Contao
+     * extensions and the language mapping in one `extensions` report, now (also after a recent
+     * failure), but only while version reports are on. Never throws.
+     *
+     * @param list<array{code: string, supertext: string|null}> $languages
+     *
+     * @return array{enabled: bool, sent: bool, extensions: int, languages: int}
+     */
+    public function sendConfiguration(Request $request, array $languages): array
+    {
+        $extensions = InstallationReporter::normalizeExtensions(self::installedExtensions());
+        $languages = InstallationReporter::normalizeLanguages($languages);
+        $sent = false;
+
+        if ($this->enabled()) {
+            try {
+                $result = $this->reporter($request, static fn (): array => $languages)->sendExtensions($this->store->load(), $extensions);
+                $this->store->save($result->state);
+                $sent = $result->sent;
+            } catch (\Throwable $e) {
+                $this->logger?->debug('Supertext configuration report skipped: '.$e->getMessage());
+            }
+        }
+
+        return ['enabled' => $this->enabled(), 'sent' => $sent, 'extensions' => \count($extensions), 'languages' => \count($languages)];
+    }
+
+    /**
+     * The installed Contao bundles, modules and themes (Composer packages of those types): name and
+     * version only. Installed bundles are active in Contao.
+     *
+     * @return list<array{name: string, version: string, active: bool, type: string}>
+     */
+    public static function installedExtensions(): array
+    {
+        $list = [];
+
+        foreach (['contao-bundle' => 'bundle', 'contao-module' => 'module', 'contao-theme' => 'theme'] as $composerType => $type) {
+            foreach (array_unique(InstalledVersions::getInstalledPackagesByType($composerType)) as $package) {
+                $list[] = [
+                    'name' => $package,
+                    'version' => (string) InstalledVersions::getPrettyVersion($package),
+                    'active' => true,
+                    'type' => $type,
+                ];
+            }
+        }
+
+        return $list;
     }
 
     /** The latest stored key check (for the translate screen), or null. */

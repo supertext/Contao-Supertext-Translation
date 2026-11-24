@@ -213,6 +213,39 @@ final class ReportingTest extends TestCase
         $this->assertCount(1, $this->reports());
     }
 
+    public function testSendConfigurationSendsExtensionsAndTheLanguageMapping(): void
+    {
+        $store = $this->store();
+        $this->centerStatus = 503;
+        $this->reporting($store)->run(Reporting::ON_REQUEST, self::request());
+        $this->centerStatus = 202;
+        $this->calls = [];
+
+        $result = $this->reporting($store)->sendConfiguration(self::request(), [
+            ['code' => 'en', 'supertext' => 'en-US'],
+            ['code' => 'de-CH', 'supertext' => 'de-CH'],
+            ['code' => 'de-LI', 'supertext' => null],
+        ]);
+
+        $this->assertTrue($result['enabled']);
+        $this->assertTrue($result['sent'], 'sent right away, also within the hour after a failed report');
+        $this->assertSame(3, $result['languages']);
+        [$report] = $this->reports();
+        $this->assertSame('extensions', $report['event']);
+        $this->assertIsArray($report['extensions']);
+        $this->assertCount($result['extensions'], $report['extensions']);
+        $this->assertSame([['code' => 'en', 'supertext' => 'en-US'], ['code' => 'de-CH', 'supertext' => 'de-CH'], ['code' => 'de-LI', 'supertext' => null]], $report['languages']);
+    }
+
+    public function testSendConfigurationSendsNothingWithReportsOff(): void
+    {
+        $result = $this->reporting($this->store(), setting: false)->sendConfiguration(self::request(), [['code' => 'de-CH', 'supertext' => 'de-CH']]);
+
+        $this->assertFalse($result['enabled']);
+        $this->assertFalse($result['sent']);
+        $this->assertSame([], $this->reports());
+    }
+
     public function testBrokenStorageNeverThrows(): void
     {
         $store = $this->store();

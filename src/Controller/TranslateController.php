@@ -27,7 +27,8 @@ use Symfony\Component\Routing\Attribute\Route;
 /**
  * "Translate with Supertext" screen, opened from the page operation in the site
  * structure. GET shows the target languages, POST runs the translation, or (`action`)
- * exports a translation file (`export`) or imports one (`import`, see FileExchange).
+ * exports a translation file (`export`) or imports one (`import`, see FileExchange). Administrators
+ * can send the installed extensions and the language mapping to Supertext (`send_configuration`).
  * All run the Commando Center's version report and key check after the response (Reporting).
  */
 #[Route(
@@ -85,6 +86,7 @@ final class TranslateController extends AbstractBackendController
         $includeSubpages = 'root' === $page['type'];
         $fileError = null;
         $imports = null;
+        $configResult = null;
         $action = $request->isMethod('POST') ? $request->request->getString('action') : '';
 
         if ('export' === $action) {
@@ -120,6 +122,11 @@ final class TranslateController extends AbstractBackendController
             }
         } elseif ('import' === $action) {
             [$imports, $fileError] = $this->import($request, $user);
+        } elseif ('send_configuration' === $action) {
+            if (!$user->isAdmin) {
+                throw $this->createAccessDeniedException('Only administrators can send the configuration.');
+            }
+            $configResult = $this->reporting->sendConfiguration($request, $this->languageMapping());
         } elseif ($request->isMethod('POST')) {
             $selected = array_values(array_intersect(
                 array_map('intval', (array) $request->request->all('targets')),
@@ -188,6 +195,7 @@ final class TranslateController extends AbstractBackendController
             'source_language' => $sourceLanguage,
             'source_unmapped' => '' !== $sourceLanguage && null === $this->languages->sourceOrNull($sourceLanguage, $this->translator->sourceSupertextLanguage($id)),
             'status' => $user->isAdmin ? $this->status() : null,
+            'config_result' => $configResult,
             'back_url' => $this->generateUrl('contao_backend', ['do' => 'page']),
         ]);
     }
@@ -276,6 +284,23 @@ final class TranslateController extends AbstractBackendController
     }
 
     /** The check's UTC time in the server's time zone (Y-m-d H:i; ISO order reads the same in every language). */
+    /**
+     * Every website root's language with the Supertext code it is translated into (its *Supertext
+     * language*, else an exact match or the SDK's default; null when there is none).
+     *
+     * @return list<array{code: string, supertext: string|null}>
+     */
+    private function languageMapping(): array
+    {
+        $list = [];
+
+        foreach ($this->connection->fetchAllAssociative("SELECT language, supertext_language FROM tl_page WHERE type = 'root' ORDER BY sorting") as $root) {
+            $list[] = ['code' => (string) $root['language'], 'supertext' => $this->languages->targetOrNull((string) $root['language'], (string) ($root['supertext_language'] ?? ''))];
+        }
+
+        return $list;
+    }
+
     private static function formatTime(string $iso): string
     {
         $time = strtotime($iso);

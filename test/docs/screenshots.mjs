@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Regenerates docs/images/*.png from a FRESH demo (nothing translated yet) whose
- * SUPERTEXT_API_URL points at the stand-in API (stand-in.mjs), so the images show real
- * German, French and Italian. See "Docs screenshots" in docs/DEVELOPER.md.
+ * Regenerates docs/images/*.png from a FRESH demo (nothing translated yet). In CI the demo
+ * translates with the real Supertext API (secret SUPERTEXT_API_KEY), so the images show real
+ * Supertext output; without a key its SUPERTEXT_API_URL points at the stand-in (stand-in.mjs).
+ * See "Docs screenshots" in docs/DEVELOPER.md.
  *
  *   CONTAO_URL=http://127.0.0.1:8080 EDITOR_EMAIL=… EDITOR_PASSWORD=… \
  *   ADMIN_EMAIL=… ADMIN_PASSWORD=… node test/docs/screenshots.mjs

@@ -18,6 +18,9 @@
         "ai"
     ],
     "homepage": "https://github.com/Supertext/Contao-Supertext-Translation",
+    "support": {
+        "docs": "https://github.com/supertext/Contao-Supertext-Translation/tree/main#contao-supertext-translation"
+    },
     "require": {
         "php": "^8.3",
         "ext-dom": "*",

@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+
+- **Send configuration to Supertext** in the administrators' box on the translate screen: sends Supertext the installed Contao extensions (name, version) and every website root's language with its Supertext language, so Supertext support can help better. Only when clicked, and only while version information is on. In English, German, French and Italian. Bundled Supertext Plugin Health updated to 0.4.0.
+
+### Changed
+
+- The screenshots in the guides show real Supertext translations (taken with the live API in CI instead of the stand-in's fixed texts).
+- `composer.json` links the documentation (`support.docs`) to the README.
+
 ## [1.0.0] - 2026-11-09
 
 First stable release. Every plugin release is now tested end to end against the live Supertext API (`.github/workflows/e2e.yml`).

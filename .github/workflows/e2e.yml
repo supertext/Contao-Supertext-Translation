@@ -3,8 +3,9 @@ name: E2E
 # The demo image is built once and started twice:
 # 1. against the REAL Supertext API (secret SUPERTEXT_API_KEY): language list check and the
 #    end-to-end test (test/e2e), so language mapping and the live API's behaviour are tested;
-# 2. against the stand-in API (test/docs): the docs screenshots, so the images don't change
-#    with every machine translation. Changed images are committed to main.
+# 2. for the docs screenshots (test/docs): with the same secret, so the guides show real Supertext
+#    translations; without it (forks) against the stand-in API. Version reports always go to the
+#    stand-in. Changed images are committed to main.
 # See "End-to-end tests" and "Docs screenshots" in docs/DEVELOPER.md.
 
 on:
@@ -143,17 +144,28 @@ jobs:
           EDITOR_PASSWORD: ${{ env.DEMO_EDITOR_PASSWORD }}
         run: node live.mjs
 
-      # --- 2. Docs screenshots against the stand-in ----------------------------------------
-      - name: Screenshots against the stand-in API
+      # --- 2. Docs screenshots: real translations (stand-in only without the key) ----------
+      - name: Screenshots with the real Supertext API
         id: shots
         if: success() || failure()
+        env:
+          LIVE_KEY: ${{ secrets.SUPERTEXT_API_KEY }}
         run: |
+          # The stand-in always runs: it takes the version reports (never the live Commando Center)
+          # and, without the secret, the translations too.
           (cd test/docs && nohup node stand-in.mjs > stand-in.log 2>&1 &)
+          if [ -n "$LIVE_KEY" ]; then
+            export SUPERTEXT_API_KEY="$LIVE_KEY"
+            api=(-e SUPERTEXT_API_KEY)
+          else
+            echo "::warning::Secret SUPERTEXT_API_KEY is not set: screenshots show the stand-in's translations."
+            api=(-e SUPERTEXT_API_KEY=stand-in -e SUPERTEXT_API_URL=http://127.0.0.1:8765/v1/)
+          fi
           mysql -h127.0.0.1 -uroot -proot -e 'CREATE DATABASE contao_docs'
           docker run -d --name demo-docs --network host \
             -e PORT=8082 -e APP_SECRET \
             -e DATABASE_URL='mysql://root:root@127.0.0.1:3306/contao_docs?serverVersion=8.4.0&charset=utf8mb4' \
-            -e SUPERTEXT_API_KEY=stand-in -e SUPERTEXT_API_URL=http://127.0.0.1:8765/v1/ \
+            "${api[@]}" \
             -e SUPERTEXT_REPORT_URL=http://127.0.0.1:8765/report \
             -e DEMO_ADMIN_EMAIL -e DEMO_ADMIN_PASSWORD -e DEMO_EDITOR_EMAIL -e DEMO_EDITOR_PASSWORD \
             contao-supertext-demo
@@ -161,7 +173,7 @@ jobs:
           cd test/docs
           CONTAO_URL="$DOCS_URL" EDITOR_EMAIL="$DEMO_EDITOR_EMAIL" EDITOR_PASSWORD="$DEMO_EDITOR_PASSWORD" \
             ADMIN_EMAIL="$DEMO_ADMIN_EMAIL" ADMIN_PASSWORD="$DEMO_ADMIN_PASSWORD" node screenshots.mjs
-          if grep -q '"unknown"' stand-in.log; then
+          if [ -z "$LIVE_KEY" ] && grep -q '"unknown"' stand-in.log; then
             echo "::warning::The stand-in doesn't know some demo segments; add them to test/docs/translations.json:"
             grep '"unknown"' stand-in.log
           fi
@@ -219,7 +231,7 @@ jobs:
           name: docs-images
           path: docs/images/
 
-      # Straight to main, no pull request to review: the images come from the stand-in, and a push
+      # Straight to main, no pull request to review (Remy can't review ~30 × 5 images a week), and a push
       # with the workflow's own token starts no other workflow. See "End-to-end tests" in docs/DEVELOPER.md.
       - name: Commit the images to main
         env:

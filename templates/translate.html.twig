@@ -113,6 +113,17 @@
                     <h3>{{ 'MSC.supertext.reports'|trans }}</h3>
                     <p>{{ (status.reports ? 'MSC.supertext.reportsOn' : 'MSC.supertext.reportsOff')|trans }}{% if status.reports_env %} (SUPERTEXT_VERSION_REPORTS){% endif %}</p>
                     <p class="tl_help" style="white-space: normal">{{ 'MSC.supertext.reportsHelp'|trans }}</p>
+                    {% if config_result %}
+                        {% if not config_result.enabled %}
+                            <p class="tl_info">{{ 'MSC.supertext.configOff'|trans }}</p>
+                        {% elseif config_result.sent %}
+                            <p class="tl_confirm">{{ 'MSC.supertext.configSent'|trans([config_result.extensions, config_result.languages]) }}</p>
+                        {% else %}
+                            <p class="tl_error">{{ 'MSC.supertext.configFailed'|trans }}</p>
+                        {% endif %}
+                    {% endif %}
+                    <p><button type="submit" name="action" value="send_configuration" class="tl_submit" formnovalidate>{{ 'MSC.supertext.configButton'|trans }}</button></p>
+                    <p class="tl_help" style="white-space: normal">{{ 'MSC.supertext.configHelp'|trans }}</p>
                 </div>
             {% endif %}
         </div>
