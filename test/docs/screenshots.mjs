@@ -78,7 +78,11 @@ await editor.goto(`${B}/contao/supertext/translate/${englishRoot}`);
 const form = editor.locator('form.supertext-translate');
 
 await editor.locator('#st_subpages').check().catch(() => {});
+// The form posts synchronously and the page loads when Supertext is done: with the real API that
+// takes longer than Playwright's default 30 s navigation wait (which the click itself also uses).
+editor.setDefaultNavigationTimeout(300_000);
 await Promise.all([editor.waitForNavigation({ timeout: 300_000 }), form.locator('button.tl_submit, input.tl_submit').first().click()]);
+editor.setDefaultNavigationTimeout(30_000);
 await shot(editor, editor.locator('form.supertext-translate'), '03-translate-result.png');
 
 // Translating again: existing translations are marked "will be updated".
