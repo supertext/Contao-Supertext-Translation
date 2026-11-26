@@ -6,6 +6,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ### Added
 
+- Indonesian, Romanian, Thai and Vietnamese (`id`, `ro`, `th`, `vi`) can be chosen as Supertext languages, all with formal and informal address (Supertext SDK 0.7.0).
 - **Send configuration to Supertext** in the administrators' box on the translate screen: sends Supertext the installed Contao extensions (name, version) and every website root's language with its Supertext language, so Supertext support can help better. Only when clicked, and only while version information is on. In English, German, French and Italian. Bundled Supertext Plugin Health updated to 0.4.0.
 
 ### Changed
